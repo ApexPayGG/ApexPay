@@ -1,0 +1,45 @@
+# Zależności i artefakty builda (odświeżane w obrazie)
+node_modules
+dist
+
+# Repozytorium i sekrety — nie trafiają do kontekstu builda
+.git
+.gitignore
+.gitattributes
+
+# Zmienne środowiskowe (wycieki)
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Logi
+*.log
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testy i pokrycie
+coverage
+.nyc_output
+**/*.test.ts
+**/*.test.tsx
+**/__tests__
+**/__mocks__
+vitest.config.*
+vitest.workspace.*
+
+# IDE i narzędzia lokalne
+.vscode
+.idea
+.cursor
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Dokumentacja i żądania HTTP lokalne (niepotrzebne w obrazie)
+*.md
+api-tests.http

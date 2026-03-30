@@ -1,0 +1,150 @@
+# Produkcja: izolowana sieć, DB/Redis/RabbitMQ bez portów na hoście; publiczny dostęp przez Traefik (80/443, Let's Encrypt).
+# Uruchomienie: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# Wymagane m.in.: ACME_EMAIL (Let's Encrypt), DOMAIN_NAME (FQDN API).
+# Opcjonalnie: APEXPAY_API_IMAGE=ghcr.io/<org>/<repo>/apexpay-api:latest (CI/CD pull z GHCR).
+
+name: apexpay-prod
+
+x-logging: &json-file-rotating
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  traefik:
+    image: traefik:v3.0
+    restart: unless-stopped
+    networks:
+      - apexpay_prod_network
+    ports:
+      - "80:80"
+      - "443:443"
+    command:
+      - "--api.dashboard=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=apexpay_prod_network"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    logging: *json-file-rotating
+
+  postgres:
+    image: postgres:16-alpine
+    networks:
+      - apexpay_prod_network
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *json-file-rotating
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - apexpay_prod_network
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *json-file-rotating
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    networks:
+      - apexpay_prod_network
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    logging: *json-file-rotating
+
+  api-migrator:
+    image: ${APEXPAY_API_IMAGE:-apexpay-api:latest}
+    networks:
+      - apexpay_prod_network
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging: *json-file-rotating
+
+  api:
+    image: ${APEXPAY_API_IMAGE:-apexpay-api:latest}
+    networks:
+      - apexpay_prod_network
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-apexpay.events}
+      PSP_DEPOSIT_WEBHOOK_SECRET: ${PSP_DEPOSIT_WEBHOOK_SECRET:-}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=apexpay_prod_network
+      # Reguła: Host z interpolacją Compose — Traefik otrzymuje Header(`Host`, `FQDN`)
+      - "traefik.http.routers.api.rule=Header(`Host`, `${DOMAIN_NAME:-api.apexpay.com}`)"
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.services.api.loadbalancer.server.port=3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api-migrator:
+        condition: service_completed_successfully
+    restart: on-failure
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1G"
+      restart_policy:
+        condition: on-failure
+    logging: *json-file-rotating
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  traefik_letsencrypt:
+
+networks:
+  apexpay_prod_network:
+    name: apexpay_prod_network
+    driver: bridge

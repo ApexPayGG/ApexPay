@@ -1,0 +1,228 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { WalletService } from "../services/wallet.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
+import { WalletController } from "./wallet.controller.js";
+
+const mockProcessEntryFee = vi.fn();
+const mockDepositFunds = vi.fn();
+
+function createController() {
+  const walletService = {
+    processEntryFee: mockProcessEntryFee,
+    depositFunds: mockDepositFunds,
+  } as unknown as WalletService;
+  return new WalletController(walletService);
+}
+
+type ChargeBody = {
+  amount?: unknown;
+  referenceId?: unknown;
+};
+
+type MockRequest = {
+  user?: { id: string };
+  body: ChargeBody;
+};
+
+function createMockResponse() {
+  const res = {
+    status: vi.fn(),
+    json: vi.fn(),
+  };
+  res.status.mockImplementation(() => res);
+  return res as {
+    status: ReturnType<typeof vi.fn>;
+    json: ReturnType<typeof vi.fn>;
+  };
+}
+
+describe("WalletController.chargeEntryFee", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProcessEntryFee.mockReset();
+    mockDepositFunds.mockReset();
+  });
+
+  it("returns 200 and serializes BigInt fields in the transaction payload to strings", async () => {
+    const createdAt = new Date("2026-03-28T12:00:00.000Z");
+    mockProcessEntryFee.mockResolvedValue({
+      id: "txn_fee_1",
+      walletId: "wal_1",
+      amount: -2500n,
+      referenceId: "match-lobby-42",
+      createdAt,
+    });
+
+    const req: MockRequest = {
+      user: { id: "usr_1" },
+      body: {
+        amount: "2500",
+        referenceId: "match-lobby-42",
+      },
+    };
+    const res = createMockResponse();
+
+    const controller = createController();
+    await controller.chargeEntryFee(req as never, res as never);
+
+    expect(mockProcessEntryFee).toHaveBeenCalledWith("usr_1", 2500n, "match-lobby-42");
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledTimes(1);
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      id: "txn_fee_1",
+      walletId: "wal_1",
+      amount: "-2500",
+      referenceId: "match-lobby-42",
+    });
+    expect(typeof payload?.amount).toBe("string");
+  });
+
+  it("returns 401 when req.user is missing or has empty id", async () => {
+    const controller = createController();
+
+    const cases: MockRequest[] = [
+      { body: { amount: "10", referenceId: "r1" } },
+      { user: { id: "" }, body: { amount: "10", referenceId: "r1" } },
+      { user: { id: "   " }, body: { amount: "10", referenceId: "r1" } },
+    ];
+
+    for (const req of cases) {
+      mockProcessEntryFee.mockClear();
+      const res = createMockResponse();
+      await controller.chargeEntryFee(req as never, res as never);
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(mockProcessEntryFee).not.toHaveBeenCalled();
+    }
+  });
+
+  it("returns 400 and does not call WalletService when payload is invalid", async () => {
+    const controller = createController();
+
+    const cases: MockRequest[] = [
+      { user: { id: "u1" }, body: { amount: "10" } },
+      { user: { id: "u1" }, body: { referenceId: "r1" } },
+      { user: { id: "u1" }, body: { amount: "x", referenceId: "r1" } },
+      { user: { id: "u1" }, body: { amount: "1.5", referenceId: "r1" } },
+      { user: { id: "u1" }, body: { amount: "", referenceId: "r1" } },
+      { user: { id: "u1" }, body: { amount: "10", referenceId: "" } },
+    ];
+
+    for (const req of cases) {
+      mockProcessEntryFee.mockClear();
+      const res = createMockResponse();
+      await controller.chargeEntryFee(req as never, res as never);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(mockProcessEntryFee).not.toHaveBeenCalled();
+    }
+  });
+
+  it("returns 402 when WalletService throws InsufficientFundsError", async () => {
+    mockProcessEntryFee.mockRejectedValue(new InsufficientFundsError());
+
+    const req: MockRequest = {
+      user: { id: "usr_2" },
+      body: {
+        amount: "999999",
+        referenceId: "match-lobby-99",
+      },
+    };
+    const res = createMockResponse();
+
+    const controller = createController();
+    await controller.chargeEntryFee(req as never, res as never);
+
+    expect(res.status).toHaveBeenCalledWith(402);
+    expect(res.json).toHaveBeenCalled();
+  });
+});
+
+type DepositBody = {
+  amount?: unknown;
+  referenceId?: unknown;
+};
+
+describe("WalletController.deposit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProcessEntryFee.mockReset();
+    mockDepositFunds.mockReset();
+  });
+
+  it("returns 400 when amount or referenceId is missing or amount is not digits-only", async () => {
+    const controller = createController();
+
+    const cases: MockRequest[] = [
+      { user: { id: "u1" }, body: { amount: "100", referenceId: undefined } as DepositBody },
+      { user: { id: "u1" }, body: { referenceId: "r1" } as DepositBody },
+      { user: { id: "u1" }, body: { amount: "x", referenceId: "r1" } as DepositBody },
+      { user: { id: "u1" }, body: { amount: "1.5", referenceId: "r1" } as DepositBody },
+      { user: { id: "u1" }, body: { amount: "", referenceId: "r1" } as DepositBody },
+      { user: { id: "u1" }, body: { amount: "100", referenceId: "" } as DepositBody },
+    ];
+
+    for (const req of cases) {
+      mockDepositFunds.mockClear();
+      const res = createMockResponse();
+      await controller.deposit(req as never, res as never);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(mockDepositFunds).not.toHaveBeenCalled();
+    }
+  });
+
+  it("returns 401 when req.user is missing or has empty id", async () => {
+    const controller = createController();
+
+    const cases: MockRequest[] = [
+      { body: { amount: "5000", referenceId: "dep-1" } as DepositBody },
+      { user: { id: "" }, body: { amount: "5000", referenceId: "dep-1" } as DepositBody },
+    ];
+
+    for (const req of cases) {
+      mockDepositFunds.mockClear();
+      const res = createMockResponse();
+      await controller.deposit(req as never, res as never);
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(mockDepositFunds).not.toHaveBeenCalled();
+    }
+  });
+
+  it("returns 200 with transaction JSON BigInt fields as strings, using req.user.id and parsed amount", async () => {
+    const createdAt = new Date("2026-06-10T15:30:00.000Z");
+    mockDepositFunds.mockResolvedValue({
+      transaction: {
+        id: "txn_dep_ok",
+        walletId: "wal_user_9",
+        amount: 7500n,
+        referenceId: "stripe-ch_abc",
+        type: "DEPOSIT",
+        createdAt,
+      },
+      created: true,
+    });
+
+    const req: MockRequest = {
+      user: { id: "usr_from_jwt" },
+      body: { amount: "7500", referenceId: "stripe-ch_abc" } as DepositBody,
+    };
+    const res = createMockResponse();
+
+    const controller = createController();
+    await controller.deposit(req as never, res as never);
+
+    expect(mockDepositFunds).toHaveBeenCalledWith("usr_from_jwt", 7500n, "stripe-ch_abc");
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "txn_dep_ok",
+        walletId: "wal_user_9",
+        amount: "7500",
+        referenceId: "stripe-ch_abc",
+        type: "DEPOSIT",
+        createdAt,
+      }),
+    );
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(typeof payload?.amount).toBe("string");
+  });
+});

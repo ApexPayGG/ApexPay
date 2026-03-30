@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- CORE: Autoryzacja i Użytkownik ---
+model User {
+  id                   String                  @id @default(cuid())
+  email                String                  @unique
+  passwordHash         String
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  wallet               Wallet?
+  organizedTournaments Tournament[]            @relation("OrganizedTournaments")
+  participations       TournamentParticipant[]
+  reportedMatches      MatchReport[]           @relation("ReportedMatches")
+  balanceLedgerEntries UserBalanceLedger[]
+}
+
+// --- FINANSE: Portfele i Księga Główna (Ledger) ---
+model Wallet {
+  id          String        @id @default(cuid())
+  balance     BigInt        @default(0)
+  userId      String        @unique
+  user        User          @relation(fields: [userId], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          String          @id @default(cuid())
+  amount      BigInt
+  referenceId String          @unique
+  type        TransactionType
+  walletId    String
+  wallet      Wallet          @relation(fields: [walletId], references: [id])
+  createdAt   DateTime        @default(now())
+}
+
+enum TransactionType {
+  DEPOSIT
+  FEE
+  WITHDRAWAL
+  ESCROW_HOLD   // Blokada środków na wpisowe
+  PRIZE_PAYOUT  // Wypłata nagrody
+  REFUND
+}
+
+// --- APEXPAY: Silnik Turniejowy B2B2C ---
+model Tournament {
+  id                   String           @id @default(cuid())
+  title                String
+  entryFee             BigInt
+  maxPlayers           Int
+  registrationEndsAt   DateTime
+  minLevel             Int              @default(1)
+  organizerId          String
+  organizer            User             @relation("OrganizedTournaments", fields: [organizerId], references: [id])
+  status               TournamentStatus @default(REGISTRATION)
+  createdAt            DateTime         @default(now())
+
+  participants         TournamentParticipant[]
+  matches              Match[]
+}
+
+enum TournamentStatus {
+  REGISTRATION
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+model TournamentParticipant {
+  id           String     @id @default(cuid())
+  tournamentId String
+  userId       String
+  joinedAt     DateTime   @default(now())
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  user         User       @relation(fields: [userId], references: [id])
+
+  @@unique([tournamentId, userId]) // Twarda blokada: gracz dołącza tylko raz
+}
+
+model Match {
+  id           String      @id @default(cuid())
+  tournamentId String
+  tournament   Tournament  @relation(fields: [tournamentId], references: [id])
+  status       MatchStatus @default(PENDING)
+  winnerId     String?
+  createdAt    DateTime    @default(now())
+
+  reports      MatchReport[]
+}
+
+enum MatchStatus {
+  PENDING
+  DISPUTED
+  RESOLVED
+  SETTLED
+}
+
+model OutboxEvent {
+  id         String   @id @default(cuid())
+  eventType  String
+  payload    Json
+  status     String   @default("PENDING")
+  retryCount Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+}
+
+model UserBalanceLedger {
+  id          String   @id @default(cuid())
+  userId      String
+  matchId     String
+  amountDelta BigInt
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("user_balances")
+}
+
+model MatchReport {
+  id              String   @id @default(cuid())
+  matchId         String
+  match           Match    @relation(fields: [matchId], references: [id])
+  reporterId      String
+  reporter        User     @relation("ReportedMatches", fields: [reporterId], references: [id])
+  claimedWinnerId String
+  createdAt       DateTime @default(now())
+
+  @@unique([matchId, reporterId])
+}

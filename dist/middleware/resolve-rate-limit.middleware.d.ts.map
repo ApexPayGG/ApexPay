@@ -1,0 +1,1 @@
+{"version":3,"file":"resolve-rate-limit.middleware.d.ts","sourceRoot":"","sources":["../../src/middleware/resolve-rate-limit.middleware.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,YAAY,EAAE,OAAO,EAAE,QAAQ,EAAE,MAAM,SAAS,CAAC;AAE/D,OAAO,KAAK,EAAE,KAAK,EAAE,MAAM,SAAS,CAAC;AA0BrC,wBAAgB,gCAAgC,CAAC,KAAK,EAAE,KAAK,IACnD,KAAK,OAAO,EAAE,KAAK,QAAQ,EAAE,MAAM,YAAY,KAAG,IAAI,CA2C/D"}

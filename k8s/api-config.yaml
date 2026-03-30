@@ -1,0 +1,33 @@
+# Szablon: wartości nie-sekretowe. Sekrety — osobny Secret poniżej.
+# CI/CD: kubectl apply -f (po podstawieniu) lub helm/kustomize z overlay.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apexpay-api-config
+  labels:
+    app: apexpay-api
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  # CI/CD: adres Redis w klastrze (przykład)
+  REDIS_URL: "redis://REPLACE_REDIS_HOST:6379"
+  # CI/CD: opcjonalnie — exchange RabbitMQ (domyślnie w kodzie apexpay.events)
+  RABBITMQ_EXCHANGE: "apexpay.events"
+  # CI/CD: pełny URL AMQP do brokera w klastrze
+  RABBITMQ_URL: "amqp://REPLACE_RABBIT_USER:REPLACE_RABBIT_PASS@REPLACE_RABBIT_HOST:5672"
+---
+# Opaque Secret — stringData w repozytorium TYLKO jako szablon; w produkcji wstrzyknij przez:
+#   kubectl create secret generic apexpay-api-secrets --from-literal=DATABASE_URL=... --from-literal=JWT_SECRET=...
+# lub ExternalSecrets / SealedSecrets / Vault.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: apexpay-api-secrets
+  labels:
+    app: apexpay-api
+type: Opaque
+stringData:
+  # CI/CD: zastąp przed apply (lub nie commituj tego pliku z prawdziwymi wartościami)
+  DATABASE_URL: "postgresql://REPLACE_USER:REPLACE_PASSWORD@REPLACE_PG_HOST:5432/REPLACE_DB"
+  JWT_SECRET: "REPLACE_JWT_SECRET_MIN_32_CHARS_CI_CD"

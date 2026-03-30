@@ -1,0 +1,77 @@
+@baseUrl = http://localhost:3000/api
+@rootUrl = http://localhost:3000
+@email = ceo@amcenergy.com
+@password = twardeHaslo123!
+@stripeRef = stripe-evt-99999
+@matchRef = match-xyz-00001
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbW5iaTJ4Mm0wMDAwaWtod3Y4OHo2cXhpIiwiaWF0IjoxNzc0Nzc1Nzc1LCJleHAiOjE3NzQ4NjIxNzV9.fb7L0fGHfdKrEwShjc9wHe3oUv6z7fNQ_RqLbqwHqhk
+
+### Webhook PSP — wpłata (HMAC-SHA256 hex surowego body w nagłówku x-apexpay-signature; sekret = PSP_DEPOSIT_WEBHOOK_SECRET)
+# Przykład podpisu (bash): BODY='{"paymentId":"evt_1","userId":"USER_CUID","amountMinor":"5000","status":"succeeded"}'; printf '%s' "$BODY" | openssl dgst -sha256 -hmac "TWÓJ_SEKRET" | awk '{print $2}'
+POST {{rootUrl}}/internal/webhooks/psp-deposit
+Content-Type: application/json
+x-apexpay-signature: WKLEJ_HEX_64_ZNAKI
+
+{
+  "paymentId": "evt_1",
+  "userId": "USER_CUID",
+  "amountMinor": "5000",
+  "status": "succeeded"
+}
+
+### 0. Rejestracja (Zwróci 409 Conflict - to prawidłowe, konto już istnieje)
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### 1. Zaloguj się (Zwróci 200 OK)
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### 2. Wpłać depozyt (100 PLN = 10000 groszy)
+POST {{baseUrl}}/wallet/deposit
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "amount": "10000",
+  "referenceId": "{{stripeRef}}"
+}
+
+### 3. Pobierz opłatę za turniej (10 PLN = 1000 groszy)
+POST {{baseUrl}}/wallet/charge
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "amount": "1000",
+  "referenceId": "{{matchRef}}"
+}
+
+### 4. Utwórz nowy turniej (ApexPay)
+POST {{baseUrl}}/tournaments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "title": "Turniej Tekken 8 - Pro Series",
+  "entryFeeCents": "5000",
+  "maxPlayers": 128,
+  "registrationEndsInHours": 48
+}
+
+### 5. Dołącz do turnieju (Gracz)
+# Podmień {{tournamentId}} na ID z odpowiedzi sekcji 4 (pole data.tournamentId).
+@tournamentId = TUTAJ_WKLEJ_ID_TURNIEJU
+POST {{baseUrl}}/tournaments/{{tournamentId}}/join
+Content-Type: application/json
+Authorization: Bearer {{token}}

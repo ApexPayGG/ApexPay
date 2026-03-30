@@ -1,0 +1,122 @@
+# Testy obciążeniowe transakcji finansowych — blokuje merge PR przy niepowodzeniu (exit code ≠ 0).
+name: Transaction stress tests
+
+on:
+  pull_request:
+    paths:
+      - "src/services/**"
+      - "src/controllers/**"
+      - "src/scripts/**"
+      - "prisma/**"
+
+concurrency:
+  group: transaction-stress-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: Stress (idempotency + DB locks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: apexpay_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d apexpay_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/apexpay_ci
+      REDIS_URL: redis://127.0.0.1:6379
+      JWT_SECRET: ci-transaction-stress-jwt-secret-not-for-production
+      PORT: "3000"
+      STRESS_BASE_URL: http://127.0.0.1:3000
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy
+
+      - name: Generate CI JWT and export STRESS_JWT
+        run: |
+          set -euo pipefail
+          TOKEN=$(npx tsx src/scripts/generate-ci-jwt.ts)
+          {
+            echo "STRESS_JWT<<EOF"
+            echo "$TOKEN"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start API server (background)
+        run: |
+          set -euo pipefail
+          node dist/server.js &
+          echo $! > /tmp/apexpay-api.pid
+          sleep 3
+
+      - name: Wait for API to accept connections
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ 2>/dev/null || echo "000")
+            if [ "$code" != "000" ]; then
+              echo "API odpowiada (HTTP $code)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Timeout: serwer nie nasłuchuje na :3000"
+          exit 1
+
+      - name: Stress test — idempotency (auto + seed)
+        run: npm run test:stress:idempotency:auto
+
+      - name: Stress test — DB locks (auto + seed)
+        run: npm run test:stress:db-locks:auto
+
+      - name: Stop API server
+        if: always()
+        run: |
+          if [ -f /tmp/apexpay-api.pid ]; then
+            kill "$(cat /tmp/apexpay-api.pid)" 2>/dev/null || true
+          fi

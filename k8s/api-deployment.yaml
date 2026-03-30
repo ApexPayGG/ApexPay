@@ -1,0 +1,88 @@
+# Migracje: każdy Pod uruchamia initContainer z `prisma migrate deploy` (idempotentne; Prisma blokuje równoległe migracje).
+# Przy 3 replikach start może być zsynchronizowany przez kolejkę blokad w DB.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apexpay-api
+  labels:
+    app: apexpay-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: apexpay-api
+  template:
+    metadata:
+      labels:
+        app: apexpay-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      initContainers:
+        - name: prisma-migrate
+          image: apexpay-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["npx", "prisma", "migrate", "deploy"]
+          env:
+            - name: HOME
+              value: /tmp
+          envFrom:
+            - secretRef:
+                name: apexpay-api-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      containers:
+        - name: api
+          image: apexpay-api:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: apexpay-api-config
+            - secretRef:
+                name: apexpay-api-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
