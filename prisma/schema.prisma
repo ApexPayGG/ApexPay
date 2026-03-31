@@ -1,9 +1,11 @@
 generator client {
   provider = "prisma-client-js"
 }
-env()
+
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Wymuszona przebudowa obrazu Dockera dla ApexPay - 31.03.2026
 }
 
 // --- CORE: Autoryzacja i Użytkownik ---
@@ -23,12 +25,12 @@ model User {
 
 // --- FINANSE: Portfele i Księga Główna (Ledger) ---
 model Wallet {
-  id          String        @id @default(cuid())
-  balance     BigInt        @default(0)
-  userId      String        @unique
-  user        User          @relation(fields: [userId], references: [id])
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id        String        @id @default(cuid())
+  balance   BigInt        @default(0)
+  userId    String        @unique
+  user      User          @relation(fields: [userId], references: [id])
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   transactions Transaction[]
 }
@@ -54,19 +56,19 @@ enum TransactionType {
 
 // --- APEXPAY: Silnik Turniejowy B2B2C ---
 model Tournament {
-  id                   String           @id @default(cuid())
-  title                String
-  entryFee             BigInt
-  maxPlayers           Int
-  registrationEndsAt   DateTime
-  minLevel             Int              @default(1)
-  organizerId          String
-  organizer            User             @relation("OrganizedTournaments", fields: [organizerId], references: [id])
-  status               TournamentStatus @default(REGISTRATION)
-  createdAt            DateTime         @default(now())
+  id                 String           @id @default(cuid())
+  title              String
+  entryFee           BigInt
+  maxPlayers         Int
+  registrationEndsAt DateTime
+  minLevel           Int              @default(1)
+  organizerId        String
+  organizer          User             @relation("OrganizedTournaments", fields: [organizerId], references: [id])
+  status             TournamentStatus @default(REGISTRATION)
+  createdAt          DateTime         @default(now())
 
-  participants         TournamentParticipant[]
-  matches              Match[]
+  participants       TournamentParticipant[]
+  matches            Match[]
 }
 
 enum TournamentStatus {
