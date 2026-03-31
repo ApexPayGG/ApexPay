@@ -66,12 +66,24 @@ jobs:
             REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
             export APEXPAY_API_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-api:latest"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            COMPOSE_CMD="docker compose -f docker-compose.prod.yml"
             if [ -f .env.prod ]; then
-              docker compose -f docker-compose.prod.yml --env-file .env.prod pull api api-migrator
-              docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-            else
-              docker compose -f docker-compose.prod.yml pull api api-migrator
-              docker compose -f docker-compose.prod.yml up -d
+              COMPOSE_CMD="$COMPOSE_CMD --env-file .env.prod"
+            fi
+
+            $COMPOSE_CMD pull api api-migrator
+
+            set +e
+            $COMPOSE_CMD up -d
+            UP_EXIT=$?
+            set -e
+
+            if [ "$UP_EXIT" -ne 0 ]; then
+              echo "[deploy] docker compose up failed, printing diagnostics..."
+              $COMPOSE_CMD ps || true
+              docker logs --tail 200 apexpay-prod-api-migrator-1 || true
+              docker logs --tail 120 apexpay-prod-postgres-1 || true
+              exit "$UP_EXIT"
             fi
 
   notify:
