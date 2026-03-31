@@ -90,9 +90,12 @@ jobs:
     name: Notify
     runs-on: ubuntu-latest
     needs: [build-push, deploy]
-    if: always() && secrets.SLACK_WEBHOOK_URL != ''
+    if: always()
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
       - name: Slack — raport wdrożenia
+        if: env.SLACK_WEBHOOK_URL != ''
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
