@@ -4,8 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
-  // Wymuszona przebudowa obrazu Dockera dla ApexPay - 31.03.2026
+  // Wymuszenie przebudowy: usunięto 'url' zgodnie z wymogami Prisma v7.6+ dla ApexPay (31.03.2026)
 }
 
 // --- CORE: Autoryzacja i Użytkownik ---
