@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WalletService } from "../services/wallet.service.js";
 import {
   InsufficientFundsError,
+  TransferSelfError,
   WalletNotFoundError,
 } from "../services/wallet.service.js";
 import { WalletController } from "./wallet.controller.js";
@@ -378,7 +379,134 @@ describe("WalletController.transfer", () => {
     expect(mockTransferP2P).toHaveBeenCalledWith("a", "b", 50n, "pay-1");
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotent: false }),
+      expect.objectContaining({
+        idempotent: false,
+        message: "Przelew wykonany pomyślnie.",
+      }),
     );
+  });
+
+  it("returns 400 when body is invalid", async () => {
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "", amount: "10", referenceId: "r" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockTransferP2P).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 with idempotent message when service reports idempotent", async () => {
+    mockTransferP2P.mockResolvedValue({ idempotent: true });
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "b", amount: "1", referenceId: "idem-x" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Transakcja już wcześniej zaksięgowana (idempotentność).",
+      idempotent: true,
+    });
+  });
+
+  it("returns 400 on TransferSelfError", async () => {
+    mockTransferP2P.mockRejectedValue(new TransferSelfError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "same" },
+        body: { toUserId: "same", amount: "1", referenceId: "r1" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Nie można przelać na to samo konto.",
+      code: "BAD_REQUEST",
+    });
+  });
+
+  it("returns 404 on WalletNotFoundError", async () => {
+    mockTransferP2P.mockRejectedValue(new WalletNotFoundError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "b", amount: "1", referenceId: "r1" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Portfel nadawcy lub odbiorcy nie istnieje.",
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("returns 402 on InsufficientFundsError", async () => {
+    mockTransferP2P.mockRejectedValue(new InsufficientFundsError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "b", amount: "1", referenceId: "r1" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(402);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Niewystarczające środki.",
+      code: "PAYMENT_REQUIRED",
+    });
+  });
+
+  it("returns 400 on RangeError from service", async () => {
+    mockTransferP2P.mockRejectedValue(new RangeError("referenceId is required"));
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "b", amount: "1", referenceId: "x" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "referenceId is required",
+      code: "BAD_REQUEST",
+    });
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockTransferP2P.mockRejectedValue(new Error("db boom"));
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "b", amount: "1", referenceId: "r1" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Błąd serwera przy przelewie.",
+      code: "INTERNAL_ERROR",
+    });
+    logSpy.mockRestore();
   });
 });

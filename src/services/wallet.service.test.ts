@@ -314,6 +314,68 @@ describe("WalletService.transferP2P", () => {
     expect(r).toEqual({ idempotent: false });
     expect(lastTx.wallet.update).toHaveBeenCalledTimes(2);
     expect(lastTx.transaction.create).toHaveBeenCalledTimes(2);
+    expect(lastTx.transaction.findFirst).toHaveBeenCalledWith({
+      where: { referenceId: "p2p:x-1:out" },
+    });
+    const outCall = lastTx.transaction.create.mock.calls[0]?.[0] as {
+      data: { referenceId: string; amount: bigint; type: string; walletId: string };
+    };
+    const inCall = lastTx.transaction.create.mock.calls[1]?.[0] as {
+      data: { referenceId: string; amount: bigint; type: string; walletId: string };
+    };
+    expect(outCall.data).toMatchObject({
+      walletId: "wf",
+      amount: -100n,
+      referenceId: "p2p:x-1:out",
+      type: "WITHDRAWAL",
+    });
+    expect(inCall.data).toMatchObject({
+      walletId: "wt",
+      amount: 100n,
+      referenceId: "p2p:x-1:in",
+      type: "DEPOSIT",
+    });
+  });
+
+  it("throws RangeError when amount is not positive", async () => {
+    await expect(service.transferP2P("a", "b", 0n, "r")).rejects.toThrow(RangeError);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("throws RangeError when referenceId is empty after trim", async () => {
+    await expect(service.transferP2P("a", "b", 1n, "   ")).rejects.toThrow(RangeError);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("throws WalletNotFoundError when sender wallet is missing", async () => {
+    lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValueOnce(null);
+    await expect(service.transferP2P("a", "b", 1n, "ref-z")).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+  });
+
+  it("throws WalletNotFoundError when recipient wallet is missing", async () => {
+    lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValueOnce({ id: "wf" }).mockResolvedValueOnce(null);
+    await expect(service.transferP2P("a", "b", 1n, "ref-z")).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+  });
+
+  it("throws InsufficientFundsError when debit fails with P2025", async () => {
+    lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique
+      .mockResolvedValueOnce({ id: "wf" })
+      .mockResolvedValueOnce({ id: "wt" });
+    const p2025 = new Prisma.PrismaClientKnownRequestError("insufficient", {
+      code: "P2025",
+      clientVersion: "test",
+    });
+    lastTx.wallet.update.mockRejectedValueOnce(p2025);
+    await expect(service.transferP2P("a", "b", 10n, "pay-x")).rejects.toBeInstanceOf(
+      InsufficientFundsError,
+    );
   });
 });
 
