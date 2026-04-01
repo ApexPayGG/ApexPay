@@ -29,7 +29,9 @@ services:
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      # Zmiana z TLS Challenge na HTTP Challenge (Wymóg środowiska Cloudflare Proxied)
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
     volumes:
@@ -114,8 +116,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=apexpay_prod_network
-      # Reguła: Host z interpolacją Compose — Traefik otrzymuje Header(`Host`, `FQDN`)
-      - "traefik.http.routers.api.rule=Header(`Host`, `${DOMAIN_NAME:-api.apexpay.com}`)"
+      # Zoptymalizowana reguła Host z poprawną, domyślną domeną platformy
+      - "traefik.http.routers.api.rule=Host(`${DOMAIN_NAME:-api.apexpay.pl}`)"
       - traefik.http.routers.api.entrypoints=websecure
       - traefik.http.routers.api.tls.certresolver=letsencrypt
       - traefik.http.services.api.loadbalancer.server.port=3000
