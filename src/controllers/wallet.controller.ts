@@ -3,6 +3,7 @@ import type { Transaction } from "@prisma/client";
 import type { WalletService } from "../services/wallet.service.js";
 import {
   InsufficientFundsError,
+  TransferSelfError,
   WalletNotFoundError,
 } from "../services/wallet.service.js";
 
@@ -52,6 +53,80 @@ export class WalletController {
   /**
    * Zasilenie portfela użytkownika (Bank centralny) — tylko rola ADMIN (`requireRole`).
    */
+  /**
+   * Przelew na inne konto użytkownika (P2P). Wymaga zalogowania.
+   * Body: `toUserId`, `amount` (string cyfr), `referenceId` (unikalny klucz idempotencji).
+   */
+  async transfer(req: Request, res: Response): Promise<void> {
+    const userId = req.user?.id?.trim();
+    if (userId === undefined || userId.length === 0) {
+      res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+      return;
+    }
+
+    try {
+      const body = req.body as {
+        toUserId?: unknown;
+        amount?: unknown;
+        referenceId?: unknown;
+      };
+
+      if (
+        !this.isNonEmptyTrimmedString(body.toUserId) ||
+        typeof body.amount !== "string" ||
+        !UNSIGNED_INT_STRING.test(body.amount.trim()) ||
+        !this.isNonEmptyTrimmedString(body.referenceId)
+      ) {
+        res.status(400).json({
+          error:
+            "Wymagane: toUserId, amount (liczba całkowita jako string), referenceId (unikalny).",
+          code: "BAD_REQUEST",
+        });
+        return;
+      }
+
+      const toId = (body.toUserId as string).trim();
+      const amountBigInt = BigInt(body.amount.trim());
+      const ref = (body.referenceId as string).trim();
+
+      const { idempotent } = await this.walletService.transferP2P(
+        userId,
+        toId,
+        amountBigInt,
+        ref,
+      );
+
+      res.status(200).json({
+        message: idempotent
+          ? "Transakcja już wcześniej zaksięgowana (idempotentność)."
+          : "Przelew wykonany pomyślnie.",
+        idempotent,
+      });
+    } catch (err) {
+      if (err instanceof TransferSelfError) {
+        res.status(400).json({ error: "Nie można przelać na to samo konto.", code: "BAD_REQUEST" });
+        return;
+      }
+      if (err instanceof WalletNotFoundError) {
+        res.status(404).json({
+          error: "Portfel nadawcy lub odbiorcy nie istnieje.",
+          code: "NOT_FOUND",
+        });
+        return;
+      }
+      if (err instanceof InsufficientFundsError) {
+        res.status(402).json({ error: "Niewystarczające środki.", code: "PAYMENT_REQUIRED" });
+        return;
+      }
+      if (err instanceof RangeError) {
+        res.status(400).json({ error: err.message, code: "BAD_REQUEST" });
+        return;
+      }
+      console.error("transfer P2P:", err);
+      res.status(500).json({ error: "Błąd serwera przy przelewie.", code: "INTERNAL_ERROR" });
+    }
+  }
+
   async fundWallet(req: Request, res: Response): Promise<void> {
     try {
       const body = req.body as { targetUserId?: unknown; amount?: unknown };

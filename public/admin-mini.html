@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ApexPay — mini panel admin</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 0.35rem; }
+    textarea { min-height: 4rem; font-family: monospace; font-size: 12px; }
+    pre { background: #111; color: #0f0; padding: 1rem; overflow: auto; font-size: 12px; }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .row button { width: auto; flex: 1; min-width: 140px; }
+  </style>
+</head>
+<body>
+  <h1>Mini panel (admin)</h1>
+  <p>Statyczna strona — token trzymaj poza gitem. API musi zwracać CORS (już masz <code>origin: true</code>).</p>
+
+  <label>Base URL API</label>
+  <input id="base" type="text" value="https://api.apexpay.pl" />
+
+  <label>Bearer token (JWT)</label>
+  <textarea id="token" placeholder="eyJhbGci..."></textarea>
+
+  <div class="row" style="margin-top:1rem;">
+    <button type="button" id="btnTx">GET /api/v1/admin/transactions</button>
+    <button type="button" id="btnHealth">GET /health</button>
+  </div>
+
+  <label>Odpowiedź</label>
+  <pre id="out">(pusto)</pre>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const base = () => $("base").value.replace(/\/$/, "");
+    const headers = () => ({
+      Accept: "application/json",
+      Authorization: "Bearer " + $("token").value.trim(),
+    });
+
+    async function go(path, opts = {}) {
+      const url = base() + path;
+      $("out").textContent = "…";
+      try {
+        const res = await fetch(url, { ...opts, headers: { ...headers(), ...opts.headers } });
+        const text = await res.text();
+        let body;
+        try { body = JSON.parse(text); } catch { body = text; }
+        $("out").textContent = res.status + " " + res.statusText + "\n\n" + (typeof body === "string" ? body : JSON.stringify(body, null, 2));
+      } catch (e) {
+        $("out").textContent = String(e);
+      }
+    }
+
+    $("btnTx").onclick = () => go("/api/v1/admin/transactions?limit=20&page=0");
+    $("btnHealth").onclick = () => {
+      const url = base() + "/health";
+      $("out").textContent = "…";
+      fetch(url).then(async (res) => {
+        $("out").textContent = res.status + "\n\n" + await res.text();
+      }).catch((e) => { $("out").textContent = String(e); });
+    };
+  </script>
+</body>
+</html>

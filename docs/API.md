@@ -2,28 +2,53 @@
 
 Base URL produkcji: `https://api.apexpay.pl`. Wiele tras jest zdublowanych pod **`/api/...`** i **`/api/v1/...`** (ta sama logika).
 
+- **OpenAPI (szkic)**: [openapi.yaml](./openapi.yaml)
+- **Rotacja sekretów**: [operations/SECRETS_ROTATION.md](./operations/SECRETS_ROTATION.md)
+
 ## Konwencje
 
 - **JSON**: `Content-Type: application/json` tam, gdzie jest body.
 - **Auth (JWT)**: cookie `jwt` (httpOnly) po logowaniu **lub** nagłówek `Authorization: Bearer <token>`.
-- **Komunikaty**: część endpointów zwraca teksty po polsku, część po angielsku — przed frontem warto ujednolicić w jednej iteracji.
+- **Błędy (nowsze endpointy)**: często `{ "error": "…", "code": "SNAKE_CASE" }` (np. `BAD_REQUEST`, `UNAUTHORIZED`).
+- **Legacy `/api/...`**: nagłówki **`Deprecation: true`**, **`Sunset`**, **`Link`** — preferuj **`/api/v1/...`**.
+- **Rate limit**: **POST** `/auth/register` i `/auth/login` — ok. **25 żądań / 60 s / IP** (Redis); przy przekroczeniu **429** z `code: TOO_MANY_REQUESTS`.
+
+## Health (bez prefiksu `/api`)
+
+| Metoda | Ścieżka | Opis |
+|--------|---------|------|
+| GET | `/health` | Liveness — proces działa. |
+| GET | `/health/ready` | Readiness — DB (`SELECT 1`) + Redis `PING`. **503** jeśli zależność niedostępna. |
+
+## Statyczne (dev / wewnętrznie)
+
+| Zasób | Opis |
+|-------|------|
+| GET | `/admin-mini.html` — minimalny panel (lista transakcji admina, health); token wklejasz w przeglądarce. |
 
 ## Auth
 
 | Metoda | Ścieżka | Auth | Opis |
 |--------|---------|------|------|
-| POST | `/api/v1/auth/register`, `/api/auth/register` | — | Rejestracja. `role: ADMIN` zwraca **403**. Sukces: `message`, `userId`. |
-| POST | `/api/v1/auth/login`, `/api/auth/login` | — | Logowanie. Odpowiedź: `token`, `id`, `email`, `role`, … + cookie `jwt`. |
-| GET | `/api/v1/auth/me`, `/api/auth/me` | Bearer / cookie | Profil z bazy (`id`, `email`, `role`, …). |
+| POST | `/api/v1/auth/register`, `/api/auth/register` | — | Rejestracja. `role: ADMIN` → **403**. Sukces: `message`, `userId`. |
+| POST | `/api/v1/auth/login`, `/api/auth/login` | — | Logowanie: `token`, `id`, `email`, `role`, … + cookie `jwt`. |
+| GET | `/api/v1/auth/me`, `/api/auth/me` | Bearer / cookie | Profil z bazy. |
 
 ## Portfel
 
 | Metoda | Ścieżka | Auth | Opis |
 |--------|---------|------|------|
-| GET | `/api/v1/wallet/me`, `/api/wallet/me` | Bearer / cookie | Saldo: `walletId`, `balance` (string), `updatedAt`. |
-| POST | `/api/v1/wallet/fund`, `/api/wallet/fund` | Bearer / cookie + **rola ADMIN** | Zasilenie konta: body `{ "targetUserId", "amount" }` (`amount` jako string cyfr). Tworzy wpis **`Transaction`** typu `DEPOSIT` z `referenceId` prefiks `admin-fund-`. |
-| POST | `/api/wallet/deposit` | Bearer / cookie | Wpłata z referencją zewnętrzną (`amount`, `referenceId`). |
-| POST | `/api/wallet/charge` | Bearer / cookie | Opłata / pobranie z portfela (`amount`, `referenceId`). |
+| GET | `/api/v1/wallet/me`, `/api/wallet/me` | tak | Saldo: `walletId`, `balance`, `updatedAt`. |
+| POST | `/api/v1/wallet/transfer`, `/api/wallet/transfer` | tak | **P2P**: `{ "toUserId", "amount" (string cyfr), "referenceId" }`. Idempotentnie po `referenceId` (wewnętrznie `p2p:{ref}:out` / `:in`). |
+| POST | `/api/v1/wallet/fund`, `/api/wallet/fund` | **ADMIN** | Zasilenie: `{ "targetUserId", "amount" }` + wpis `Transaction` `DEPOSIT` (`admin-fund-…`). |
+| POST | `/api/wallet/deposit` | tak | Wpłata zewnętrzna (`amount`, `referenceId`). |
+| POST | `/api/wallet/charge` | tak | Opłata (`amount`, `referenceId`). |
+
+## Admin
+
+| Metoda | Ścieżka | Auth | Opis |
+|--------|---------|------|------|
+| GET | `/api/v1/admin/transactions`, `/api/admin/transactions` | **ADMIN** | Query: `limit` (1–100), `page` (od 0). Zwraca `items`, `total`, `totalPages`. |
 
 ## Turnieje i mecze (skrót)
 
@@ -40,19 +65,14 @@ Base URL produkcji: `https://api.apexpay.pl`. Wiele tras jest zdublowanych pod *
 
 | Metoda | Ścieżka | Auth |
 |--------|---------|------|
-| POST | `/internal/webhooks/psp-deposit` | zgodnie z implementacją kontrolera |
-
-## Planowane (nie wdrożone w tej iteracji)
-
-- **P2P** / przelewy między graczami jako osobna trasa.
-- **Frontend** — osobny projekt / repo.
+| POST | `/internal/webhooks/psp-deposit` | wg kontrolera |
 
 ## CI / CD
 
-- **CI** (`CI` workflow): przy każdym PR i pushu na `main` — `prisma validate` + testy.
-- **Deploy** (`Deploy production`): uruchamia się **dopiero po zakończeniu CI ze statusem success** na gałęzi `main` (`workflow_run`). Budowany jest **ten sam commit** (`head_sha`), który przeszedł testy.
+- **CI**: PR + push `main` — `prisma validate`, testy.
+- **Deploy production**: po **sukcesie CI** na `main`, ten sam **`head_sha`**.
 
 ## Bezpieczeństwo
 
-- Nie commituj **`.env`**, **`test.http`** (z tokenami) ani prawdziwych sekretów. W repozytorium jest **`test.http.example`** — skopiuj do lokalnego `test.http` (`cp test.http.example test.http`).
-- Po wycieku **JWT** lub **JWT_SECRET**: wygeneruj nowy sekret, zdeployuj, wymuś ponowne logowanie użytkowników.
+- Nie commituj **`.env`**, **`test.http`** z tokenami. Szablon: **`test.http.example`**.
+- Szczegóły rotacji: **`docs/operations/SECRETS_ROTATION.md`**.

@@ -10,6 +10,10 @@ import type { WebSocketService } from "./services/websocket.service.js";
 class FakeRedis {
   private readonly store = new Map<string, string>();
 
+  ping(): Promise<string> {
+    return Promise.resolve("PONG");
+  }
+
   eval(
     _script: string,
     numKeys: number,
@@ -19,6 +23,9 @@ class FakeRedis {
       numKeys === 1 &&
       rest[0]?.startsWith("ratelimit:sliding:v1:resolve:user:")
     ) {
+      return Promise.resolve([1, 1]);
+    }
+    if (numKeys === 1 && rest[0]?.startsWith("ratelimit:sliding:v1:auth:ip:")) {
       return Promise.resolve([1, 1]);
     }
     if (numKeys !== 2 || rest.length < 3) {

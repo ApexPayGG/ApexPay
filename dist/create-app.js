@@ -1,18 +1,27 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, {} from "express";
 import helmet from "helmet";
 import { createServer } from "http";
+import { UserRole } from "@prisma/client";
+import { AdminController } from "./controllers/admin.controller.js";
 import { AuthController } from "./controllers/auth.controller.js";
 import { MatchController } from "./controllers/match.controller.js";
 import { MatchResolveV1Controller } from "./controllers/match-resolve-v1.controller.js";
 import { TournamentController } from "./controllers/tournament.controller.js";
 import { PspDepositWebhookController } from "./controllers/psp-deposit-webhook.controller.js";
 import { WalletController } from "./controllers/wallet.controller.js";
+import { createAdminRouter } from "./routes/admin.routes.js";
+import { createAuthRouter } from "./routes/auth.routes.js";
+import { legacyApiDeprecationMiddleware } from "./middleware/legacy-deprecation.middleware.js";
+import { clientIpForRateLimit, createSlidingWindowRateLimit, } from "./middleware/redis-sliding-window-rate-limit.js";
+import { sendApiError, ApiErrorCode } from "./lib/api-error.js";
 import { createHmacSignatureMiddleware, parseApiSecretKeysFromEnv, } from "./middleware/hmac-signature.middleware.js";
 import { createIdempotencyResolveMiddleware } from "./middleware/idempotency-resolve.middleware.js";
 import { createResolveRateLimitMiddleware } from "./middleware/resolve-rate-limit.middleware.js";
-import { authMiddleware } from "./middlewares/auth.middleware.js";
+import { authMiddleware, requireRole } from "./middlewares/auth.middleware.js";
 import { AuthService } from "./services/auth.service.js";
 import { ClearingService } from "./services/clearing.service.js";
 import { MatchSettlementService } from "./services/match-settlement.service.js";
@@ -32,10 +41,30 @@ export function createApp(options) {
         },
     }));
     app.use(cookieParser());
+    const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+    app.use(express.static(publicDir));
+    app.get("/health", (_req, res) => {
+        res.status(200).json({ status: "ok" });
+    });
+    app.get("/health/ready", async (_req, res) => {
+        try {
+            await options.prisma.$queryRaw `SELECT 1`;
+            const pong = await options.redis.ping();
+            if (pong !== "PONG") {
+                throw new Error("Redis ping failed");
+            }
+            res.status(200).json({ status: "ready" });
+        }
+        catch {
+            res.status(503).json({ status: "not_ready", code: "SERVICE_UNAVAILABLE" });
+        }
+    });
+    app.use(legacyApiDeprecationMiddleware);
     const authService = new AuthService(options.prisma);
     const authController = new AuthController(authService);
     const walletService = new WalletService(options.prisma);
     const walletController = new WalletController(walletService);
+    const adminController = new AdminController(walletService);
     const pspDepositWebhookService = new PspDepositWebhookService(walletService);
     const pspDepositWebhookController = new PspDepositWebhookController(pspDepositWebhookService, () => process.env.PSP_DEPOSIT_WEBHOOK_SECRET?.trim() || undefined);
     const tournamentController = new TournamentController();
@@ -54,17 +83,43 @@ export function createApp(options) {
     app.post("/internal/webhooks/psp-deposit", (req, res) => {
         void pspDepositWebhookController.handle(req, res);
     });
-    app.post("/api/auth/register", (req, res) => {
-        void authController.register(req, res);
+    const authPostRateLimit = createSlidingWindowRateLimit(options.redis, {
+        windowMs: 60_000,
+        maxRequests: 25,
+        keyPrefix: "ratelimit:sliding:v1:auth:ip",
+        keyFromRequest: clientIpForRateLimit,
     });
-    app.post("/api/auth/login", (req, res) => {
-        void authController.login(req, res);
+    const authRouter = createAuthRouter(authController, {
+        postRateLimit: authPostRateLimit,
     });
+    app.use("/api/v1/auth", authRouter);
+    app.use("/api/auth", authRouter);
+    const adminRouter = createAdminRouter(adminController);
+    app.use("/api/v1/admin", authMiddleware, requireRole([UserRole.ADMIN]), adminRouter);
+    app.use("/api/admin", authMiddleware, requireRole([UserRole.ADMIN]), adminRouter);
     app.post("/api/wallet/deposit", authMiddleware, (req, res) => {
         void walletController.deposit(req, res);
     });
     app.post("/api/wallet/charge", authMiddleware, (req, res) => {
         void walletController.chargeEntryFee(req, res);
+    });
+    app.get("/api/wallet/me", authMiddleware, (req, res) => {
+        void walletController.getMyWallet(req, res);
+    });
+    app.get("/api/v1/wallet/me", authMiddleware, (req, res) => {
+        void walletController.getMyWallet(req, res);
+    });
+    app.post("/api/wallet/fund", authMiddleware, requireRole([UserRole.ADMIN]), (req, res) => {
+        void walletController.fundWallet(req, res);
+    });
+    app.post("/api/v1/wallet/fund", authMiddleware, requireRole([UserRole.ADMIN]), (req, res) => {
+        void walletController.fundWallet(req, res);
+    });
+    app.post("/api/v1/wallet/transfer", authMiddleware, (req, res) => {
+        void walletController.transfer(req, res);
+    });
+    app.post("/api/wallet/transfer", authMiddleware, (req, res) => {
+        void walletController.transfer(req, res);
     });
     app.post("/api/tournaments", authMiddleware, (req, res) => {
         void tournamentController.createTournament(req, res);
@@ -86,7 +141,7 @@ export function createApp(options) {
     });
     app.use((err, _req, res, _next) => {
         console.error(err);
-        res.status(500).json({ error: "Internal Server Error" });
+        sendApiError(res, 500, ApiErrorCode.INTERNAL, "Internal Server Error");
     });
     return { app, httpServer, wsService };
 }

@@ -6,7 +6,7 @@
  */
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { Prisma } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 /** Minimalna liczba rund bcrypt (Security First). */
 export const BCRYPT_ROUNDS = 12;
 /** Stały hash do `bcrypt.compare` przy nieistniejącym użytkowniku — wyrównanie czasu odpowiedzi (timing attack). */
@@ -51,6 +51,7 @@ export class AuthService {
             select: {
                 id: true,
                 email: true,
+                role: true,
                 passwordHash: true,
                 createdAt: true,
                 updatedAt: true,
@@ -64,20 +65,35 @@ export class AuthService {
         if (!passwordOk) {
             throw new InvalidCredentialsError();
         }
-        const token = jwt.sign({ userId: row.id }, getJwtSecret(), { expiresIn: "24h" });
+        const token = jwt.sign({ userId: row.id, email: row.email, role: row.role }, getJwtSecret(), { expiresIn: "24h" });
         return {
             token,
             user: {
                 id: row.id,
                 email: row.email,
+                role: row.role,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
             },
         };
     }
-    async registerUser(email, password) {
+    /** Profil użytkownika po zweryfikowanym `userId` z JWT (np. GET /me). */
+    async getUserProfile(userId) {
+        return this.prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                email: true,
+                role: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+        });
+    }
+    async registerUser(email, password, roleInput) {
         const normalizedEmail = this.assertValidEmail(email);
         this.assertValidPassword(password);
+        const role = this.resolveRegistrationRole(roleInput);
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         try {
             return await this.prisma.$transaction(async (tx) => {
@@ -85,10 +101,12 @@ export class AuthService {
                     data: {
                         email: normalizedEmail,
                         passwordHash,
+                        role,
                     },
                     select: {
                         id: true,
                         email: true,
+                        role: true,
                         createdAt: true,
                         updatedAt: true,
                     },
@@ -126,6 +144,19 @@ export class AuthService {
         if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
             throw new AuthValidationError("Password exceeds maximum length for hashing");
         }
+    }
+    /** Publiczna rejestracja: domyślnie PLAYER; tylko wartości z enum UserRole. */
+    resolveRegistrationRole(raw) {
+        if (raw === undefined || raw === null || raw === "") {
+            return UserRole.PLAYER;
+        }
+        if (raw === UserRole.PLAYER) {
+            return UserRole.PLAYER;
+        }
+        if (raw === UserRole.ADMIN) {
+            throw new AuthValidationError("Publiczna rejestracja z rolą ADMIN jest zabroniona.");
+        }
+        throw new AuthValidationError("Invalid role");
     }
 }
 //# sourceMappingURL=auth.service.js.map

@@ -1,4 +1,6 @@
-import { EmailAlreadyRegisteredError, InvalidCredentialsError, } from "../services/auth.service.js";
+import { UserRole } from "@prisma/client";
+import { AuthValidationError, EmailAlreadyRegisteredError, InvalidCredentialsError, } from "../services/auth.service.js";
+const REGISTER_SUCCESS_MESSAGE = "Użytkownik utworzony pomyślnie. Portfel zainicjalizowany.";
 export class AuthController {
     authService;
     constructor(authService) {
@@ -6,19 +8,28 @@ export class AuthController {
     }
     async register(req, res) {
         try {
-            const { email, password } = req.body;
+            const { email, password, role } = req.body;
             if (!email || !password) {
-                res.status(400).json({ error: "Email and password are required" });
+                res.status(400).json({ error: "Email i hasło są wymagane." });
                 return;
             }
-            const user = await this.authService.registerUser(email, password);
+            if (role === UserRole.ADMIN || role === "ADMIN") {
+                res.status(403).json({
+                    error: "Odmowa dostępu: Nie można zarejestrować konta administratora przez publiczne API.",
+                });
+                return;
+            }
+            const user = await this.authService.registerUser(String(email), String(password), role);
             res.status(201).json({
-                id: user.id,
-                email: user.email,
-                walletBalance: "0", // Obejście błędu typu - nowy portfel ma zawsze 0
+                message: REGISTER_SUCCESS_MESSAGE,
+                userId: user.id,
             });
         }
         catch (error) {
+            if (error instanceof AuthValidationError) {
+                res.status(400).json({ error: error.message });
+                return;
+            }
             if (error instanceof EmailAlreadyRegisteredError) {
                 res.status(409).json({ error: "Conflict", message: "Email already registered" });
                 return;
@@ -45,6 +56,7 @@ export class AuthController {
                 token,
                 id: user.id,
                 email: user.email,
+                role: user.role,
                 createdAt: user.createdAt,
                 updatedAt: user.updatedAt,
             });
@@ -54,6 +66,32 @@ export class AuthController {
                 res.status(401).json({ error: "Unauthorized" });
                 return;
             }
+            console.error(error);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    }
+    /** Wymaga wcześniejszego `authenticateToken` (Bearer JWT). */
+    async me(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (userId === undefined || userId.length === 0) {
+                res.status(401).json({ error: "Unauthorized" });
+                return;
+            }
+            const profile = await this.authService.getUserProfile(userId);
+            if (profile === null) {
+                res.status(404).json({ error: "User not found" });
+                return;
+            }
+            res.status(200).json({
+                id: profile.id,
+                email: profile.email,
+                role: profile.role,
+                createdAt: profile.createdAt,
+                updatedAt: profile.updatedAt,
+            });
+        }
+        catch (error) {
             console.error(error);
             res.status(500).json({ error: "Internal server error" });
         }

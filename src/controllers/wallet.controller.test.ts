@@ -10,6 +10,7 @@ const mockProcessEntryFee = vi.fn();
 const mockDepositFunds = vi.fn();
 const mockGetWalletForUser = vi.fn();
 const mockFundWalletAtomic = vi.fn();
+const mockTransferP2P = vi.fn();
 
 function createController() {
   const walletService = {
@@ -17,6 +18,7 @@ function createController() {
     depositFunds: mockDepositFunds,
     getWalletForUser: mockGetWalletForUser,
     fundWalletAtomic: mockFundWalletAtomic,
+    transferP2P: mockTransferP2P,
   } as unknown as WalletService;
   return new WalletController(walletService);
 }
@@ -52,6 +54,7 @@ describe("WalletController.chargeEntryFee", () => {
     mockDepositFunds.mockReset();
     mockGetWalletForUser.mockReset();
     mockFundWalletAtomic.mockReset();
+    mockTransferP2P.mockReset();
   });
 
   it("returns 200 and serializes BigInt fields in the transaction payload to strings", async () => {
@@ -160,6 +163,7 @@ describe("WalletController.deposit", () => {
     mockDepositFunds.mockReset();
     mockGetWalletForUser.mockReset();
     mockFundWalletAtomic.mockReset();
+    mockTransferP2P.mockReset();
   });
 
   it("returns 400 when amount or referenceId is missing or amount is not digits-only", async () => {
@@ -245,6 +249,7 @@ describe("WalletController.getMyWallet", () => {
     vi.clearAllMocks();
     mockGetWalletForUser.mockReset();
     mockFundWalletAtomic.mockReset();
+    mockTransferP2P.mockReset();
     mockProcessEntryFee.mockReset();
     mockDepositFunds.mockReset();
   });
@@ -290,6 +295,7 @@ describe("WalletController.fundWallet", () => {
     vi.clearAllMocks();
     mockFundWalletAtomic.mockReset();
     mockGetWalletForUser.mockReset();
+    mockTransferP2P.mockReset();
     mockProcessEntryFee.mockReset();
     mockDepositFunds.mockReset();
   });
@@ -334,5 +340,45 @@ describe("WalletController.fundWallet", () => {
       message: "Konto zasilone pomyślnie.",
       newBalance: "1500",
     });
+  });
+});
+
+describe("WalletController.transfer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTransferP2P.mockReset();
+    mockFundWalletAtomic.mockReset();
+    mockGetWalletForUser.mockReset();
+    mockProcessEntryFee.mockReset();
+    mockDepositFunds.mockReset();
+  });
+
+  it("returns 401 without user", async () => {
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      { body: { toUserId: "b", amount: "1", referenceId: "r1" } } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(mockTransferP2P).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 when transfer succeeds", async () => {
+    mockTransferP2P.mockResolvedValue({ idempotent: false });
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "b", amount: "50", referenceId: "pay-1" },
+      } as never,
+      res as never,
+    );
+    expect(mockTransferP2P).toHaveBeenCalledWith("a", "b", 50n, "pay-1");
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotent: false }),
+    );
   });
 });

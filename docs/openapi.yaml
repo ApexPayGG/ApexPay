@@ -1,0 +1,138 @@
+openapi: 3.0.3
+info:
+  title: ApexPay API
+  version: 1.0.0
+  description: |
+    Szkic OpenAPI — uzupełniaj przy zmianach. Preferowana baza ścieżek `/api/v1`.
+servers:
+  - url: https://api.apexpay.pl
+  - url: http://localhost:3000
+
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /health/ready:
+    get:
+      summary: Readiness (DB + Redis)
+      responses:
+        "200":
+          description: Ready
+        "503":
+          description: Not ready
+
+  /api/v1/auth/register:
+    post:
+      summary: Rejestracja
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+                role: { type: string, description: Tylko PLAYER; ADMIN zwraca 403 }
+      responses:
+        "201": { description: Utworzono }
+        "400": { description: Walidacja }
+        "403": { description: Próba rejestracji ADMIN }
+
+  /api/v1/auth/login:
+    post:
+      summary: Logowanie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200": { description: token + cookie jwt }
+
+  /api/v1/auth/me:
+    get:
+      summary: Profil (JWT)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Profil użytkownika }
+
+  /api/v1/wallet/me:
+    get:
+      summary: Saldo własnego portfela
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: walletId, balance, updatedAt }
+
+  /api/v1/wallet/transfer:
+    post:
+      summary: Przelew P2P
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [toUserId, amount, referenceId]
+              properties:
+                toUserId: { type: string }
+                amount: { type: string, description: Liczba całkowita jako string }
+                referenceId: { type: string, description: Unikalny klucz idempotencji }
+      responses:
+        "200": { description: Przelew lub idempotentny powtórzony }
+        "402": { description: Niewystarczające środki }
+
+  /api/v1/wallet/fund:
+    post:
+      summary: Zasilenie portfela (ADMIN)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetUserId, amount]
+              properties:
+                targetUserId: { type: string }
+                amount: { type: string }
+      responses:
+        "200": { description: newBalance }
+
+  /api/v1/admin/transactions:
+    get:
+      summary: Lista transakcji (ledger)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 100 }
+        - in: query
+          name: page
+          schema: { type: integer, default: 0 }
+      responses:
+        "200": { description: items, total, totalPages }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -25,24 +25,6 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const redis = new Redis(redisUrl);
 const { app, httpServer } = createApp({ prisma, redis });
-/** Liveness (K8s): proces HTTP działa — bez zapytań do DB/Redis. */
-app.get("/health", (_req, res) => {
-    res.status(200).json({ status: "ok" });
-});
-/** Readiness (K8s): DB + Redis dostępne zanim Service poleje ruchem. */
-app.get("/health/ready", async (_req, res) => {
-    try {
-        await prisma.$queryRaw `SELECT 1`;
-        const pong = await redis.ping();
-        if (pong !== "PONG") {
-            throw new Error("Redis ping unexpected");
-        }
-        res.status(200).json({ status: "ready" });
-    }
-    catch {
-        res.status(503).json({ status: "not_ready" });
-    }
-});
 app.get("/metrics", async (_req, res, next) => {
     try {
         res.setHeader("Content-Type", register.contentType);

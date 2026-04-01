@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, {
@@ -10,13 +12,21 @@ import type { Redis } from "ioredis";
 import { createServer, type Server as HttpServer } from "http";
 import type { PrismaClient } from "@prisma/client";
 import { UserRole } from "@prisma/client";
+import { AdminController } from "./controllers/admin.controller.js";
 import { AuthController } from "./controllers/auth.controller.js";
 import { MatchController } from "./controllers/match.controller.js";
 import { MatchResolveV1Controller } from "./controllers/match-resolve-v1.controller.js";
 import { TournamentController } from "./controllers/tournament.controller.js";
 import { PspDepositWebhookController } from "./controllers/psp-deposit-webhook.controller.js";
 import { WalletController } from "./controllers/wallet.controller.js";
+import { createAdminRouter } from "./routes/admin.routes.js";
 import { createAuthRouter } from "./routes/auth.routes.js";
+import { legacyApiDeprecationMiddleware } from "./middleware/legacy-deprecation.middleware.js";
+import {
+  clientIpForRateLimit,
+  createSlidingWindowRateLimit,
+} from "./middleware/redis-sliding-window-rate-limit.js";
+import { sendApiError, ApiErrorCode } from "./lib/api-error.js";
 import {
   createHmacSignatureMiddleware,
   parseApiSecretKeysFromEnv,
@@ -62,10 +72,32 @@ export function createApp(options: CreateAppOptions): {
   );
   app.use(cookieParser());
 
+  const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+  app.use(express.static(publicDir));
+
+  app.get("/health", (_req, res) => {
+    res.status(200).json({ status: "ok" });
+  });
+  app.get("/health/ready", async (_req, res) => {
+    try {
+      await options.prisma.$queryRaw`SELECT 1`;
+      const pong = await options.redis.ping();
+      if (pong !== "PONG") {
+        throw new Error("Redis ping failed");
+      }
+      res.status(200).json({ status: "ready" });
+    } catch {
+      res.status(503).json({ status: "not_ready", code: "SERVICE_UNAVAILABLE" });
+    }
+  });
+
+  app.use(legacyApiDeprecationMiddleware);
+
   const authService = new AuthService(options.prisma);
   const authController = new AuthController(authService);
   const walletService = new WalletService(options.prisma);
   const walletController = new WalletController(walletService);
+  const adminController = new AdminController(walletService);
   const pspDepositWebhookService = new PspDepositWebhookService(walletService);
   const pspDepositWebhookController = new PspDepositWebhookController(
     pspDepositWebhookService,
@@ -102,9 +134,31 @@ export function createApp(options: CreateAppOptions): {
     void pspDepositWebhookController.handle(req, res);
   });
 
-  const authRouter = createAuthRouter(authController);
+  const authPostRateLimit = createSlidingWindowRateLimit(options.redis, {
+    windowMs: 60_000,
+    maxRequests: 25,
+    keyPrefix: "ratelimit:sliding:v1:auth:ip",
+    keyFromRequest: clientIpForRateLimit,
+  });
+  const authRouter = createAuthRouter(authController, {
+    postRateLimit: authPostRateLimit,
+  });
   app.use("/api/v1/auth", authRouter);
   app.use("/api/auth", authRouter);
+
+  const adminRouter = createAdminRouter(adminController);
+  app.use(
+    "/api/v1/admin",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    adminRouter,
+  );
+  app.use(
+    "/api/admin",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    adminRouter,
+  );
 
   app.post("/api/wallet/deposit", authMiddleware, (req, res) => {
     void walletController.deposit(req as never, res as never);
@@ -137,6 +191,13 @@ export function createApp(options: CreateAppOptions): {
       void walletController.fundWallet(req, res);
     },
   );
+
+  app.post("/api/v1/wallet/transfer", authMiddleware, (req, res) => {
+    void walletController.transfer(req, res);
+  });
+  app.post("/api/wallet/transfer", authMiddleware, (req, res) => {
+    void walletController.transfer(req, res);
+  });
 
   app.post("/api/tournaments", authMiddleware, (req, res) => {
     void tournamentController.createTournament(req as never, res as never);
@@ -172,7 +233,12 @@ export function createApp(options: CreateAppOptions): {
   app.use(
     (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
       console.error(err);
-      res.status(500).json({ error: "Internal Server Error" });
+      sendApiError(
+        res,
+        500,
+        ApiErrorCode.INTERNAL,
+        "Internal Server Error",
+      );
     },
   );
 
