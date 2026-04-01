@@ -17,7 +17,10 @@ Content-Type: application/json
   "password": "PotezneHasloAdmina!"
 }
 
-### Test strażnika (pobranie chronionego profilu)
-# Wklej token z odpowiedzi logowania (pole "token"), bez cudzysłowów.
+### Krok 2: Test strażnika w praktyce (GET /me)
+# Token wklejasz TYLKO w jedną linię poniżej — po znaku =, bez cudzysłowów, cały ciąg eyJ... z pola "token" po logowaniu.
+# Send Request przy GET → 200 OK. Test „hackera”: zmień jeden znak w tokenie w @token → 403.
+@token = WKLEJ_TUTAJ_CALY_TOKEN_JEDNA_LINIA
+
 GET https://api.apexpay.pl/api/v1/auth/me
-Authorization: Bearer TUTAJ_WKLEJ_SWOJ_TOKEN
+Authorization: Bearer {{token}}

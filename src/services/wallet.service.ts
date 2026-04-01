@@ -16,8 +16,49 @@ export class DuplicateTransactionError extends Error {
   }
 }
 
+export class WalletNotFoundError extends Error {
+  constructor() {
+    super("Wallet not found");
+    this.name = "WalletNotFoundError";
+  }
+}
+
 export class WalletService {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async getWalletForUser(
+    userId: string,
+  ): Promise<{ id: string; balance: bigint; updatedAt: Date } | null> {
+    return this.prisma.wallet.findUnique({
+      where: { userId },
+      select: { id: true, balance: true, updatedAt: true },
+    });
+  }
+
+  /**
+   * Zasilenie salda (tylko wywołania z warstwy admin). Atomowy `increment` — bezpiecznie przy równoległych operacjach.
+   */
+  async fundWalletAtomic(targetUserId: string, amount: bigint): Promise<{ balance: bigint }> {
+    if (amount <= 0n) {
+      throw new RangeError("Amount must be strictly positive");
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const exists = await tx.wallet.findUnique({
+        where: { userId: targetUserId },
+        select: { id: true },
+      });
+      if (exists === null) {
+        throw new WalletNotFoundError();
+      }
+
+      return tx.wallet.update({
+        where: { userId: targetUserId },
+        data: { balance: { increment: amount } },
+        select: { balance: true },
+      });
+    });
+  }
 
   async depositFunds(
     userId: string,

@@ -1,7 +1,10 @@
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import type { Transaction } from "@prisma/client";
 import type { WalletService } from "../services/wallet.service.js";
-import { InsufficientFundsError } from "../services/wallet.service.js";
+import {
+  InsufficientFundsError,
+  WalletNotFoundError,
+} from "../services/wallet.service.js";
 
 /** Tylko nieujemna liczba całkowita w zapisie dziesiętnym (bez ułamków). */
 const UNSIGNED_INT_STRING = /^\d+$/;
@@ -19,6 +22,79 @@ export type ChargeEntryFeeResponse = {
 
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
+
+  /** Odczyt własnego portfela (wymaga `authMiddleware`). */
+  async getMyWallet(req: Request, res: Response): Promise<void> {
+    const userId = req.user?.id?.trim();
+    if (userId === undefined || userId.length === 0) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const wallet = await this.walletService.getWalletForUser(userId);
+      if (wallet === null) {
+        res.status(404).json({ error: "Nie znaleziono portfela dla tego konta." });
+        return;
+      }
+
+      res.status(200).json({
+        walletId: wallet.id,
+        balance: wallet.balance.toString(),
+        updatedAt: wallet.updatedAt,
+      });
+    } catch (error) {
+      console.error("Błąd pobierania portfela:", error);
+      res.status(500).json({ error: "Wewnętrzny błąd systemu księgowego." });
+    }
+  }
+
+  /**
+   * Zasilenie portfela użytkownika (Bank centralny) — tylko rola ADMIN (`requireRole`).
+   */
+  async fundWallet(req: Request, res: Response): Promise<void> {
+    try {
+      const body = req.body as { targetUserId?: unknown; amount?: unknown };
+      const { targetUserId, amount } = body;
+
+      if (
+        !this.isNonEmptyTrimmedString(targetUserId) ||
+        typeof amount !== "string" ||
+        !UNSIGNED_INT_STRING.test(amount.trim())
+      ) {
+        res.status(400).json({
+          error:
+            "Wymagane poprawne ID użytkownika oraz kwota większa od 0 (liczba całkowita w zapisie dziesiętnym).",
+        });
+        return;
+      }
+
+      const targetId = (targetUserId as string).trim();
+      const amountBigInt = BigInt(amount.trim());
+
+      const updated = await this.walletService.fundWalletAtomic(targetId, amountBigInt);
+      res.status(200).json({
+        message: "Konto zasilone pomyślnie.",
+        newBalance: updated.balance.toString(),
+      });
+    } catch (err) {
+      if (err instanceof WalletNotFoundError) {
+        res.status(404).json({ error: "Portfel docelowy nie istnieje." });
+        return;
+      }
+      if (err instanceof RangeError) {
+        res.status(400).json({
+          error:
+            "Wymagane poprawne ID użytkownika oraz kwota większa od 0 (liczba całkowita w zapisie dziesiętnym).",
+        });
+        return;
+      }
+      console.error("Błąd zasilania portfela:", err);
+      res.status(500).json({
+        error: "Wewnętrzny błąd serwera podczas księgowania transakcji.",
+      });
+    }
+  }
 
   async deposit(
     req: ChargeEntryFeeRequest,

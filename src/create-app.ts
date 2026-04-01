@@ -9,6 +9,7 @@ import helmet from "helmet";
 import type { Redis } from "ioredis";
 import { createServer, type Server as HttpServer } from "http";
 import type { PrismaClient } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { AuthController } from "./controllers/auth.controller.js";
 import { MatchController } from "./controllers/match.controller.js";
 import { MatchResolveV1Controller } from "./controllers/match-resolve-v1.controller.js";
@@ -22,7 +23,7 @@ import {
 } from "./middleware/hmac-signature.middleware.js";
 import { createIdempotencyResolveMiddleware } from "./middleware/idempotency-resolve.middleware.js";
 import { createResolveRateLimitMiddleware } from "./middleware/resolve-rate-limit.middleware.js";
-import { authMiddleware } from "./middlewares/auth.middleware.js";
+import { authMiddleware, requireRole } from "./middlewares/auth.middleware.js";
 import { AuthService } from "./services/auth.service.js";
 import { ClearingService } from "./services/clearing.service.js";
 import { MatchSettlementService } from "./services/match-settlement.service.js";
@@ -112,6 +113,30 @@ export function createApp(options: CreateAppOptions): {
   app.post("/api/wallet/charge", authMiddleware, (req, res) => {
     void walletController.chargeEntryFee(req as never, res as never);
   });
+
+  app.get("/api/wallet/me", authMiddleware, (req, res) => {
+    void walletController.getMyWallet(req, res);
+  });
+  app.get("/api/v1/wallet/me", authMiddleware, (req, res) => {
+    void walletController.getMyWallet(req, res);
+  });
+
+  app.post(
+    "/api/wallet/fund",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    (req, res) => {
+      void walletController.fundWallet(req, res);
+    },
+  );
+  app.post(
+    "/api/v1/wallet/fund",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    (req, res) => {
+      void walletController.fundWallet(req, res);
+    },
+  );
 
   app.post("/api/tournaments", authMiddleware, (req, res) => {
     void tournamentController.createTournament(req as never, res as never);

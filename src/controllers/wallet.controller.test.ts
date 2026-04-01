@@ -1,15 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WalletService } from "../services/wallet.service.js";
-import { InsufficientFundsError } from "../services/wallet.service.js";
+import {
+  InsufficientFundsError,
+  WalletNotFoundError,
+} from "../services/wallet.service.js";
 import { WalletController } from "./wallet.controller.js";
 
 const mockProcessEntryFee = vi.fn();
 const mockDepositFunds = vi.fn();
+const mockGetWalletForUser = vi.fn();
+const mockFundWalletAtomic = vi.fn();
 
 function createController() {
   const walletService = {
     processEntryFee: mockProcessEntryFee,
     depositFunds: mockDepositFunds,
+    getWalletForUser: mockGetWalletForUser,
+    fundWalletAtomic: mockFundWalletAtomic,
   } as unknown as WalletService;
   return new WalletController(walletService);
 }
@@ -21,8 +28,10 @@ type ChargeBody = {
 
 type MockRequest = {
   user?: { id: string };
-  body: ChargeBody;
+  body: ChargeBody | FundBody;
 };
+
+type FundBody = { targetUserId?: unknown; amount?: unknown };
 
 function createMockResponse() {
   const res = {
@@ -41,6 +50,8 @@ describe("WalletController.chargeEntryFee", () => {
     vi.clearAllMocks();
     mockProcessEntryFee.mockReset();
     mockDepositFunds.mockReset();
+    mockGetWalletForUser.mockReset();
+    mockFundWalletAtomic.mockReset();
   });
 
   it("returns 200 and serializes BigInt fields in the transaction payload to strings", async () => {
@@ -147,6 +158,8 @@ describe("WalletController.deposit", () => {
     vi.clearAllMocks();
     mockProcessEntryFee.mockReset();
     mockDepositFunds.mockReset();
+    mockGetWalletForUser.mockReset();
+    mockFundWalletAtomic.mockReset();
   });
 
   it("returns 400 when amount or referenceId is missing or amount is not digits-only", async () => {
@@ -224,5 +237,102 @@ describe("WalletController.deposit", () => {
     );
     const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(typeof payload?.amount).toBe("string");
+  });
+});
+
+describe("WalletController.getMyWallet", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetWalletForUser.mockReset();
+    mockFundWalletAtomic.mockReset();
+    mockProcessEntryFee.mockReset();
+    mockDepositFunds.mockReset();
+  });
+
+  it("returns 401 when user id is missing", async () => {
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.getMyWallet({ body: {} } as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(mockGetWalletForUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when wallet does not exist", async () => {
+    mockGetWalletForUser.mockResolvedValue(null);
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.getMyWallet({ user: { id: "u1" } } as never, res as never);
+    expect(mockGetWalletForUser).toHaveBeenCalledWith("u1");
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 200 with walletId and balance as string", async () => {
+    const updatedAt = new Date("2026-04-01T12:00:00.000Z");
+    mockGetWalletForUser.mockResolvedValue({
+      id: "wal_1",
+      balance: 100n,
+      updatedAt,
+    });
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.getMyWallet({ user: { id: "u1" } } as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      walletId: "wal_1",
+      balance: "100",
+      updatedAt,
+    });
+  });
+});
+
+describe("WalletController.fundWallet", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFundWalletAtomic.mockReset();
+    mockGetWalletForUser.mockReset();
+    mockProcessEntryFee.mockReset();
+    mockDepositFunds.mockReset();
+  });
+
+  it("returns 400 when body is invalid", async () => {
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.fundWallet(
+      { body: { targetUserId: "", amount: "10" } } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockFundWalletAtomic).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when target wallet is missing", async () => {
+    mockFundWalletAtomic.mockRejectedValue(new WalletNotFoundError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.fundWallet(
+      {
+        body: { targetUserId: "target-1", amount: "500" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 200 with new balance string", async () => {
+    mockFundWalletAtomic.mockResolvedValue({ balance: 1500n });
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.fundWallet(
+      {
+        body: { targetUserId: "target-1", amount: "500" },
+      } as never,
+      res as never,
+    );
+    expect(mockFundWalletAtomic).toHaveBeenCalledWith("target-1", 500n);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Konto zasilone pomyślnie.",
+      newBalance: "1500",
+    });
   });
 });
