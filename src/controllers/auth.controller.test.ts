@@ -10,11 +10,13 @@ import { AuthController } from "./auth.controller.js";
 
 const mockRegisterUser = vi.fn();
 const mockLoginUser = vi.fn();
+const mockGetUserProfile = vi.fn();
 
 function createController() {
   const authService = {
     registerUser: mockRegisterUser,
     loginUser: mockLoginUser,
+    getUserProfile: mockGetUserProfile,
   } as unknown as AuthService;
   return new AuthController(authService);
 }
@@ -245,6 +247,53 @@ describe("AuthController.login", () => {
       token: "zmockowany_token",
       id: "usr_ok",
       email: "player@example.com",
+      role: UserRole.PLAYER,
+      createdAt,
+      updatedAt,
+    });
+  });
+});
+
+describe("AuthController.me", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetUserProfile.mockReset();
+  });
+
+  it("returns 401 when req.user.id is missing", async () => {
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.me({} as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(mockGetUserProfile).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when user no longer exists in database", async () => {
+    mockGetUserProfile.mockResolvedValue(null);
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.me({ user: { id: "gone" } } as never, res as never);
+    expect(mockGetUserProfile).toHaveBeenCalledWith("gone");
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 200 with profile from AuthService", async () => {
+    const createdAt = new Date("2026-04-01T12:00:00.000Z");
+    const updatedAt = new Date("2026-04-01T12:00:00.000Z");
+    mockGetUserProfile.mockResolvedValue({
+      id: "usr_me",
+      email: "me@example.com",
+      role: UserRole.PLAYER,
+      createdAt,
+      updatedAt,
+    });
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.me({ user: { id: "usr_me" } } as never, res as never);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      id: "usr_me",
+      email: "me@example.com",
       role: UserRole.PLAYER,
       createdAt,
       updatedAt,

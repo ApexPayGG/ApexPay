@@ -90,4 +90,32 @@ export class AuthController {
       res.status(500).json({ error: "Internal server error" });
     }
   }
+
+  /** Wymaga wcześniejszego `authenticateToken` (Bearer JWT). */
+  async me(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = req.user?.id;
+      if (userId === undefined || userId.length === 0) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const profile = await this.authService.getUserProfile(userId);
+      if (profile === null) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      res.status(200).json({
+        id: profile.id,
+        email: profile.email,
+        role: profile.role,
+        createdAt: profile.createdAt,
+        updatedAt: profile.updatedAt,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
 }

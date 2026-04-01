@@ -278,3 +278,39 @@ describe("AuthService.loginUser", () => {
     expect(result.user).not.toHaveProperty("password");
   });
 });
+
+describe("AuthService.getUserProfile", () => {
+  const createdAt = new Date("2026-04-01T10:00:00.000Z");
+  const updatedAt = new Date("2026-04-01T10:00:00.000Z");
+
+  it("returns null when user does not exist", async () => {
+    const prisma = {
+      user: { findUnique: vi.fn().mockResolvedValue(null) },
+    };
+    const service = createServiceWithPrisma(prisma as never);
+    await expect(service.getUserProfile("missing-id")).resolves.toBeNull();
+  });
+
+  it("returns id, email, role and timestamps", async () => {
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "u_prof",
+          email: "p@example.com",
+          role: UserRole.PLAYER,
+          createdAt,
+          updatedAt,
+        }),
+      },
+    };
+    const service = createServiceWithPrisma(prisma as never);
+    const result = await service.getUserProfile("u_prof");
+    expect(result).toEqual({
+      id: "u_prof",
+      email: "p@example.com",
+      role: UserRole.PLAYER,
+      createdAt,
+      updatedAt,
+    });
+  });
+});

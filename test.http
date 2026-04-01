@@ -1,5 +1,5 @@
-# Publiczna rejestracja: rola ADMIN jest zablokowana (HTTP 403).
-# Poniżej przykład poprawnego żądania (domyślnie PLAYER, jeśli pominięto role).
+### Rejestracja (publiczna; rola ADMIN → 403)
+# Domyślnie PLAYER, jeśli pominięto pole role.
 POST https://api.apexpay.pl/api/v1/auth/register
 Content-Type: application/json
 
@@ -7,3 +7,17 @@ Content-Type: application/json
   "email": "nowy-gracz@example.com",
   "password": "PotezneHasloAdmina!"
 }
+
+### Logowanie (pobieranie klucza do królestwa)
+POST https://api.apexpay.pl/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@apexpay.pl",
+  "password": "PotezneHasloAdmina!"
+}
+
+### Test strażnika (pobranie chronionego profilu)
+# Wklej token z odpowiedzi logowania (pole "token"), bez cudzysłowów.
+GET https://api.apexpay.pl/api/v1/auth/me
+Authorization: Bearer TUTAJ_WKLEJ_SWOJ_TOKEN

@@ -109,6 +109,20 @@ export class AuthService {
     };
   }
 
+  /** Profil użytkownika po zweryfikowanym `userId` z JWT (np. GET /me). */
+  async getUserProfile(userId: string): Promise<RegisteredUser | null> {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
   async registerUser(
     email: string,
     password: string,
