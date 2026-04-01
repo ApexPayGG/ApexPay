@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { Prisma } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import {
   AuthService,
   EmailAlreadyRegisteredError,
@@ -46,6 +46,7 @@ describe("AuthService.registerUser", () => {
     const mockUser = {
       id: "u1",
       email: "a@b.co",
+      role: UserRole.PLAYER,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -67,6 +68,7 @@ describe("AuthService.registerUser", () => {
     const mockUser = {
       id: "u1",
       email: "a@b.co",
+      role: UserRole.PLAYER,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -87,6 +89,12 @@ describe("AuthService.registerUser", () => {
     expect(walletCreate.mock.calls[0]?.[0]).toMatchObject({
       data: { userId: "u1", balance: 0n },
     });
+    expect(userCreate.mock.calls[0]?.[0]).toMatchObject({
+      data: expect.objectContaining({
+        email: "a@b.co",
+        role: UserRole.PLAYER,
+      }),
+    });
     expect(result).toEqual(mockUser);
   });
 
@@ -94,6 +102,7 @@ describe("AuthService.registerUser", () => {
     const mockUser = {
       id: "u1",
       email: "user@example.com",
+      role: UserRole.PLAYER,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -120,6 +129,7 @@ describe("AuthService.registerUser", () => {
     const mockUser = {
       id: "u1",
       email: "a@b.co",
+      role: UserRole.PLAYER,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -160,6 +170,12 @@ describe("AuthService.registerUser", () => {
     await expect(service.registerUser("a@b.co", "short")).rejects.toThrow();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it("rejects invalid role value", async () => {
+    const service = createServiceWithPrisma(prisma);
+    await expect(service.registerUser("a@b.co", "validpassword12", "ADMIN")).rejects.toThrow();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("AuthService.loginUser", () => {
@@ -197,6 +213,7 @@ describe("AuthService.loginUser", () => {
     prisma.user.findUnique.mockResolvedValue({
       id: "usr_db_1",
       email: "player@example.com",
+      role: UserRole.PLAYER,
       passwordHash: "stored-hash",
       createdAt,
       updatedAt,
@@ -218,6 +235,7 @@ describe("AuthService.loginUser", () => {
     prisma.user.findUnique.mockResolvedValue({
       id: "usr_db_2",
       email: "winner@example.com",
+      role: UserRole.PLAYER,
       passwordHash: "stored-hash-2",
       createdAt,
       updatedAt,
@@ -230,13 +248,18 @@ describe("AuthService.loginUser", () => {
 
     expect(jwt.sign).toHaveBeenCalled();
     const signPayload = vi.mocked(jwt.sign).mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(signPayload).toMatchObject({ userId: "usr_db_2" });
+    expect(signPayload).toMatchObject({
+      userId: "usr_db_2",
+      email: "winner@example.com",
+      role: UserRole.PLAYER,
+    });
 
     expect(result).toEqual({
       token: "jwt-signed-value",
       user: {
         id: "usr_db_2",
         email: "winner@example.com",
+        role: UserRole.PLAYER,
         createdAt,
         updatedAt,
       },

@@ -7,8 +7,7 @@
 
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import type { PrismaClient } from "@prisma/client";
-import { Prisma } from "@prisma/client";
+import { Prisma, UserRole, type PrismaClient } from "@prisma/client";
 
 /** Minimalna liczba rund bcrypt (Security First). */
 export const BCRYPT_ROUNDS = 12;
@@ -29,6 +28,7 @@ export function normalizeEmailInput(raw: string): string {
 export type RegisteredUser = {
   id: string;
   email: string;
+  role: UserRole;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -74,6 +74,7 @@ export class AuthService {
       select: {
         id: true,
         email: true,
+        role: true,
         passwordHash: true,
         createdAt: true,
         updatedAt: true,
@@ -90,22 +91,32 @@ export class AuthService {
       throw new InvalidCredentialsError();
     }
 
-    const token = jwt.sign({ userId: row.id }, getJwtSecret(), { expiresIn: "24h" });
+    const token = jwt.sign(
+      { userId: row.id, email: row.email, role: row.role },
+      getJwtSecret(),
+      { expiresIn: "24h" },
+    );
 
     return {
       token,
       user: {
         id: row.id,
         email: row.email,
+        role: row.role,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       },
     };
   }
 
-  async registerUser(email: string, password: string): Promise<RegisteredUser> {
+  async registerUser(
+    email: string,
+    password: string,
+    roleInput?: unknown,
+  ): Promise<RegisteredUser> {
     const normalizedEmail = this.assertValidEmail(email);
     this.assertValidPassword(password);
+    const role = this.resolveRegistrationRole(roleInput);
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
@@ -115,10 +126,12 @@ export class AuthService {
           data: {
             email: normalizedEmail,
             passwordHash,
+            role,
           },
           select: {
             id: true,
             email: true,
+            role: true,
             createdAt: true,
             updatedAt: true,
           },
@@ -161,5 +174,16 @@ export class AuthService {
     if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
       throw new AuthValidationError("Password exceeds maximum length for hashing");
     }
+  }
+
+  /** Publiczna rejestracja: domyślnie PLAYER; tylko wartości z enum UserRole. */
+  private resolveRegistrationRole(raw: unknown): UserRole {
+    if (raw === undefined || raw === null || raw === "") {
+      return UserRole.PLAYER;
+    }
+    if (raw === UserRole.PLAYER) {
+      return UserRole.PLAYER;
+    }
+    throw new AuthValidationError("Invalid role");
   }
 }

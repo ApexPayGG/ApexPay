@@ -15,6 +15,7 @@ import { MatchResolveV1Controller } from "./controllers/match-resolve-v1.control
 import { TournamentController } from "./controllers/tournament.controller.js";
 import { PspDepositWebhookController } from "./controllers/psp-deposit-webhook.controller.js";
 import { WalletController } from "./controllers/wallet.controller.js";
+import { createAuthRouter } from "./routes/auth.routes.js";
 import {
   createHmacSignatureMiddleware,
   parseApiSecretKeysFromEnv,
@@ -100,13 +101,9 @@ export function createApp(options: CreateAppOptions): {
     void pspDepositWebhookController.handle(req, res);
   });
 
-  app.post("/api/auth/register", (req, res) => {
-    void authController.register(req as never, res as never);
-  });
-
-  app.post("/api/auth/login", (req, res) => {
-    void authController.login(req as never, res as never);
-  });
+  const authRouter = createAuthRouter(authController);
+  app.use("/api/v1/auth", authRouter);
+  app.use("/api/auth", authRouter);
 
   app.post("/api/wallet/deposit", authMiddleware, (req, res) => {
     void walletController.deposit(req as never, res as never);

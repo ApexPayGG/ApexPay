@@ -1,6 +1,8 @@
+import { UserRole } from "@prisma/client";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AuthService } from "../services/auth.service.js";
 import {
+  AuthValidationError,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
 } from "../services/auth.service.js";
@@ -18,7 +20,7 @@ function createController() {
 }
 
 /** Express-like request (bez zależności od paczki express w tym teście). */
-type RegisterBody = { email?: string; password?: string };
+type RegisterBody = { email?: string; password?: string; role?: unknown };
 type MockRequest = { body: RegisterBody };
 
 function createMockResponse() {
@@ -48,9 +50,9 @@ describe("AuthController.register", () => {
     mockRegisterUser.mockResolvedValue({
       id: "usr_1",
       email: "player@example.com",
+      role: UserRole.PLAYER,
       createdAt,
       updatedAt,
-      walletBalance: 0n,
     });
 
     const req: MockRequest = {
@@ -64,6 +66,7 @@ describe("AuthController.register", () => {
     expect(mockRegisterUser).toHaveBeenCalledWith(
       "Player@Example.COM",
       "validpassword12",
+      undefined,
     );
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledTimes(1);
@@ -71,6 +74,7 @@ describe("AuthController.register", () => {
     expect(payload).toMatchObject({
       id: "usr_1",
       email: "player@example.com",
+      role: UserRole.PLAYER,
       walletBalance: "0",
     });
     expect(typeof payload?.walletBalance).toBe("string");
@@ -109,6 +113,21 @@ describe("AuthController.register", () => {
 
     expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalled();
+  });
+
+  it("returns 400 when role is invalid", async () => {
+    mockRegisterUser.mockRejectedValue(new AuthValidationError("Invalid role"));
+
+    const req: MockRequest = {
+      body: { email: "new@example.com", password: "validpassword12", role: "INVALID" },
+    };
+    const res = createMockResponse();
+
+    const controller = createController();
+    await controller.register(req as never, res as never);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: "Invalid role" });
   });
 });
 
@@ -162,6 +181,7 @@ describe("AuthController.login", () => {
       user: {
         id: "usr_ok",
         email: "player@example.com",
+        role: UserRole.PLAYER,
         createdAt,
         updatedAt,
       },
@@ -187,6 +207,7 @@ describe("AuthController.login", () => {
       token: "zmockowany_token",
       id: "usr_ok",
       email: "player@example.com",
+      role: UserRole.PLAYER,
       createdAt,
       updatedAt,
     });
