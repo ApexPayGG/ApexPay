@@ -185,7 +185,9 @@ export class AuthService {
       return UserRole.PLAYER;
     }
     if (raw === UserRole.ADMIN) {
-      return UserRole.ADMIN;
+      throw new AuthValidationError(
+        "Publiczna rejestracja z rolą ADMIN jest zabroniona.",
+      );
     }
     throw new AuthValidationError("Invalid role");
   }

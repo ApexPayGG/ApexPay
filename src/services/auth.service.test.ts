@@ -178,6 +178,14 @@ describe("AuthService.registerUser", () => {
     ).rejects.toThrow();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it("rejects ADMIN role on public registration", async () => {
+    const service = createServiceWithPrisma(prisma);
+    await expect(
+      service.registerUser("a@b.co", "validpassword12", UserRole.ADMIN),
+    ).rejects.toThrow(/ADMIN/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("AuthService.loginUser", () => {

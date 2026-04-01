@@ -87,6 +87,9 @@ describe("AuthController.register", () => {
     const res1 = createMockResponse();
     await controller.register(reqMissingEmail as never, res1 as never);
     expect(res1.status).toHaveBeenCalledWith(400);
+    expect(res1.json).toHaveBeenCalledWith({
+      error: "Email i hasło są wymagane.",
+    });
     expect(mockRegisterUser).not.toHaveBeenCalled();
 
     const reqMissingPassword: MockRequest = {
@@ -95,6 +98,43 @@ describe("AuthController.register", () => {
     const res2 = createMockResponse();
     await controller.register(reqMissingPassword as never, res2 as never);
     expect(res2.status).toHaveBeenCalledWith(400);
+    expect(res2.json).toHaveBeenCalledWith({
+      error: "Email i hasło są wymagane.",
+    });
+    expect(mockRegisterUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when role is ADMIN (public registration blocked)", async () => {
+    const controller = createController();
+
+    const reqString: MockRequest = {
+      body: {
+        email: "hacker@example.com",
+        password: "validpassword12",
+        role: "ADMIN",
+      },
+    };
+    const res1 = createMockResponse();
+    await controller.register(reqString as never, res1 as never);
+    expect(res1.status).toHaveBeenCalledWith(403);
+    expect(res1.json).toHaveBeenCalledWith({
+      error:
+        "Odmowa dostępu: Nie można zarejestrować konta administratora przez publiczne API.",
+    });
+    expect(mockRegisterUser).not.toHaveBeenCalled();
+
+    const res2 = createMockResponse();
+    await controller.register(
+      {
+        body: {
+          email: "hacker2@example.com",
+          password: "validpassword12",
+          role: UserRole.ADMIN,
+        },
+      } as never,
+      res2 as never,
+    );
+    expect(res2.status).toHaveBeenCalledWith(403);
     expect(mockRegisterUser).not.toHaveBeenCalled();
   });
 

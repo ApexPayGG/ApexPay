@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import type { Request, Response } from "express";
 import type { AuthService } from "../services/auth.service.js";
 import {
@@ -20,7 +21,15 @@ export class AuthController {
         role?: unknown;
       };
       if (!email || !password) {
-        res.status(400).json({ error: "Email and password are required" });
+        res.status(400).json({ error: "Email i hasło są wymagane." });
+        return;
+      }
+
+      if (role === UserRole.ADMIN || role === "ADMIN") {
+        res.status(403).json({
+          error:
+            "Odmowa dostępu: Nie można zarejestrować konta administratora przez publiczne API.",
+        });
         return;
       }
 
