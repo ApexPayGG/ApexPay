@@ -44,7 +44,7 @@ describe("AuthController.register", () => {
     mockLoginUser.mockReset();
   });
 
-  it("returns 201 and serializes BigInt fields to strings in JSON body", async () => {
+  it("returns 201 with success message and userId", async () => {
     const createdAt = new Date("2026-01-15T12:00:00.000Z");
     const updatedAt = new Date("2026-01-15T12:00:00.000Z");
     mockRegisterUser.mockResolvedValue({
@@ -72,12 +72,10 @@ describe("AuthController.register", () => {
     expect(res.json).toHaveBeenCalledTimes(1);
     const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(payload).toMatchObject({
-      id: "usr_1",
-      email: "player@example.com",
-      role: UserRole.PLAYER,
-      walletBalance: "0",
+      message:
+        "Użytkownik utworzony pomyślnie. Portfel zainicjalizowany.",
+      userId: "usr_1",
     });
-    expect(typeof payload?.walletBalance).toBe("string");
   });
 
   it("returns 400 when email or password is missing from payload", async () => {

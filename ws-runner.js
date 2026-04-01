@@ -65,10 +65,16 @@ async function main() {
   if (!regRes.ok) {
     throw httpError("register", regRes, regBody);
   }
-  if (!regBody?.id || typeof regBody.id !== "string") {
-    throw new Error("[register] Oczekiwano pola id (string) w JSON.");
+  const regUserId =
+    typeof regBody?.userId === "string"
+      ? regBody.userId
+      : typeof regBody?.id === "string"
+        ? regBody.id
+        : undefined;
+  if (regUserId === undefined) {
+    throw new Error("[register] Oczekiwano pola userId lub id (string) w JSON.");
   }
-  console.log(`  → Użytkownik utworzony, id=${regBody.id}`);
+  console.log(`  → Użytkownik utworzony, id=${regUserId}`);
 
   console.log("[2/4] POST /api/auth/login …");
   const loginRes = await fetch(`${BASE}/api/auth/login`, {

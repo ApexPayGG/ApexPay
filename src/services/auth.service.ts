@@ -184,6 +184,9 @@ export class AuthService {
     if (raw === UserRole.PLAYER) {
       return UserRole.PLAYER;
     }
+    if (raw === UserRole.ADMIN) {
+      return UserRole.ADMIN;
+    }
     throw new AuthValidationError("Invalid role");
   }
 }

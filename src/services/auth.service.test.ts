@@ -173,7 +173,9 @@ describe("AuthService.registerUser", () => {
 
   it("rejects invalid role value", async () => {
     const service = createServiceWithPrisma(prisma);
-    await expect(service.registerUser("a@b.co", "validpassword12", "ADMIN")).rejects.toThrow();
+    await expect(
+      service.registerUser("a@b.co", "validpassword12", "NOT_A_ROLE"),
+    ).rejects.toThrow();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

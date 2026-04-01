@@ -1,0 +1,19 @@
+### Rejestracja (produkcja) — REST Client: kliknij „Send Request” nad żądaniem
+POST https://api.apexpay.pl/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "admin@apexpay.pl",
+  "password": "PotezneHasloAdmina!",
+  "role": "ADMIN"
+}
+
+### Lokalnie (gdy API działa na :3000)
+POST http://localhost:3000/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "admin@apexpay.local",
+  "password": "PotezneHasloAdmina!",
+  "role": "ADMIN"
+}

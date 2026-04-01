@@ -6,6 +6,9 @@ import {
   InvalidCredentialsError,
 } from "../services/auth.service.js";
 
+const REGISTER_SUCCESS_MESSAGE =
+  "Użytkownik utworzony pomyślnie. Portfel zainicjalizowany.";
+
 export class AuthController {
   constructor(private authService: AuthService) {}
 
@@ -27,10 +30,8 @@ export class AuthController {
         role,
       );
       res.status(201).json({
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        walletBalance: "0", // Obejście błędu typu - nowy portfel ma zawsze 0
+        message: REGISTER_SUCCESS_MESSAGE,
+        userId: user.id,
       });
     } catch (error) {
       if (error instanceof AuthValidationError) {
