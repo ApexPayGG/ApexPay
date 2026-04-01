@@ -24,3 +24,20 @@ Content-Type: application/json
 
 GET https://api.apexpay.pl/api/v1/auth/me
 Authorization: Bearer {{token}}
+
+### 💸 Krok 2 (portfel): saldo i „drukarka” (Bank centralny)
+# Używa tego samego @token co powyżej (zaloguj jako ADMIN). Kwota musi być stringiem w cudzysłowach, np. "1000".
+
+### 1. Sprawdzenie salda swojego (Admina)
+GET https://api.apexpay.pl/api/v1/wallet/me
+Authorization: Bearer {{token}}
+
+### 2. Drukarka pieniędzy (tylko Admin)
+POST https://api.apexpay.pl/api/v1/wallet/fund
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "targetUserId": "TUTAJ_WKLEJ_ID_Konta_Gracza",
+  "amount": "1000"
+}
