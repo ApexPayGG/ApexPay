@@ -1,28 +1,37 @@
-# Wdrożenie produkcyjne ApexPay: build obrazu multi-stage → GHCR → SSH + docker compose na serwerze.
+# Wdrożenie produkcyjne ApexPay: uruchamiane TYLKO po zielonym CI na main (ten sam commit co testy).
+# Build obrazu multi-stage → GHCR → SSH + docker compose na serwerze.
 name: Deploy production
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
 
 concurrency:
-  group: deploy-production-${{ github.ref }}
+  group: deploy-production-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 permissions:
   contents: read
   packages: write
+  actions: read
 
 jobs:
   build-push:
     name: Build & Push
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
-      - name: Checkout
+      - name: Checkout (commit z zakończonego CI)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Image name (GHCR, lowercase)
         id: meta
@@ -90,7 +99,10 @@ jobs:
     name: Notify
     runs-on: ubuntu-latest
     needs: [build-push, deploy]
-    if: always()
+    if: >-
+      always() &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
@@ -101,4 +113,4 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_COLOR: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && '#ff0000' || '#36a64f' }}
           SLACK_TITLE: Raport z wdrożenia ApexPay
-          SLACK_MESSAGE: "Etap build-push: ${{ needs.build-push.result }} | Etap deploy: ${{ needs.deploy.result }} | Wdrożenie zainicjował: ${{ github.actor }} | Commit: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          SLACK_MESSAGE: "Etap build-push: ${{ needs.build-push.result }} | Etap deploy: ${{ needs.deploy.result }} | Commit: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.workflow_run.head_sha }} | CI: ${{ github.event.workflow_run.html_url }}"

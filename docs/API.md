@@ -47,6 +47,11 @@ Base URL produkcji: `https://api.apexpay.pl`. Wiele tras jest zdublowanych pod *
 - **P2P** / przelewy między graczami jako osobna trasa.
 - **Frontend** — osobny projekt / repo.
 
+## CI / CD
+
+- **CI** (`CI` workflow): przy każdym PR i pushu na `main` — `prisma validate` + testy.
+- **Deploy** (`Deploy production`): uruchamia się **dopiero po zakończeniu CI ze statusem success** na gałęzi `main` (`workflow_run`). Budowany jest **ten sam commit** (`head_sha`), który przeszedł testy.
+
 ## Bezpieczeństwo
 
 - Nie commituj **`.env`**, **`test.http`** (z tokenami) ani prawdziwych sekretów. W repozytorium jest **`test.http.example`** — skopiuj do lokalnego `test.http` (`cp test.http.example test.http`).
