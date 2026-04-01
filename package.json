@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",
     "test": "vitest run",
     "stress:idempotency": "tsx src/scripts/stress-test-idempotency.ts",

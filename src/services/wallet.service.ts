@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { PrismaClient, Transaction } from "@prisma/client";
 import { Prisma, TransactionType } from "@prisma/client";
 
@@ -52,11 +53,23 @@ export class WalletService {
         throw new WalletNotFoundError();
       }
 
-      return tx.wallet.update({
+      const updated = await tx.wallet.update({
         where: { userId: targetUserId },
         data: { balance: { increment: amount } },
         select: { balance: true },
       });
+
+      const referenceId = `admin-fund-${randomUUID()}`;
+      await tx.transaction.create({
+        data: {
+          amount,
+          referenceId,
+          type: TransactionType.DEPOSIT,
+          walletId: exists.id,
+        },
+      });
+
+      return updated;
     });
   }
 

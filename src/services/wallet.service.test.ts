@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
-import { InsufficientFundsError, WalletService } from "./wallet.service.js";
+import { InsufficientFundsError, WalletNotFoundError, WalletService } from "./wallet.service.js";
 
 /** Minimalny kształt callbacka `prisma.$transaction` (izolacja od prawdziwej bazy). */
 type TxMock = {
   wallet: {
+    findUnique: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
   };
   transaction: {
@@ -17,6 +18,7 @@ type TxMock = {
 function createTxMock(overrides: Partial<TxMock> = {}): TxMock {
   return {
     wallet: {
+      findUnique: vi.fn(),
       update: vi.fn(),
       ...overrides.wallet,
     },
@@ -212,5 +214,58 @@ describe("WalletService.depositFunds", () => {
     expect(result).toEqual({ transaction: existing, created: false });
     expect(lastTx.wallet.update).not.toHaveBeenCalled();
     expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("WalletService.fundWalletAtomic", () => {
+  let prisma: { $transaction: ReturnType<typeof vi.fn> };
+  let service: WalletService;
+  let lastTx: TxMock;
+
+  beforeEach(() => {
+    lastTx = createTxMock();
+    prisma = {
+      $transaction: vi.fn(async (fn: (tx: TxMock) => Promise<unknown>) => fn(lastTx)),
+    };
+    service = new WalletService(prisma as unknown as PrismaClient);
+  });
+
+  it("throws WalletNotFoundError when wallet row is missing", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue(null);
+
+    await expect(service.fundWalletAtomic("missing-user", 100n)).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+    expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("increments balance and creates DEPOSIT Transaction with admin-fund referenceId", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_admin_fund" });
+    lastTx.wallet.update.mockResolvedValue({ balance: 1100n });
+    lastTx.transaction.create.mockResolvedValue({ id: "txn_af" });
+
+    const result = await service.fundWalletAtomic("usr_target", 100n);
+
+    expect(result).toEqual({ balance: 1100n });
+    expect(lastTx.wallet.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "usr_target" },
+        data: { balance: { increment: 100n } },
+      }),
+    );
+    expect(lastTx.transaction.create).toHaveBeenCalledTimes(1);
+    const createArg = lastTx.transaction.create.mock.calls[0]?.[0] as {
+      data: { referenceId: string; amount: bigint; type: string; walletId: string };
+    };
+    expect(createArg.data.walletId).toBe("wal_admin_fund");
+    expect(createArg.data.amount).toBe(100n);
+    expect(createArg.data.type).toBe("DEPOSIT");
+    expect(createArg.data.referenceId).toMatch(/^admin-fund-[0-9a-f-]{36}$/i);
+  });
+
+  it("throws RangeError when amount is not positive", async () => {
+    await expect(service.fundWalletAtomic("u1", 0n)).rejects.toThrow(RangeError);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

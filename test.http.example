@@ -18,6 +18,7 @@ Content-Type: application/json
 }
 
 ### Krok 2: Test strażnika w praktyce (GET /me)
+# Jedna definicja @token w całym pliku (jeśli masz dwie linie @token = ..., usuń duplikat).
 # Token wklejasz TYLKO w jedną linię poniżej — po znaku =, bez cudzysłowów, cały ciąg eyJ... z pola "token" po logowaniu.
 # Send Request przy GET → 200 OK. Test „hackera”: zmień jeden znak w tokenie w @token → 403.
 @token = WKLEJ_TUTAJ_CALY_TOKEN_JEDNA_LINIA
@@ -33,6 +34,10 @@ GET https://api.apexpay.pl/api/v1/wallet/me
 Authorization: Bearer {{token}}
 
 ### 2. Drukarka pieniędzy (tylko Admin)
+# W JSON poniżej (ok. linia z "targetUserId"): usuń TUTAJ_WKLEJ_ID_Konta_Gracza i wklej (Ctrl+V) prawdziwe userId — między cudzysłowy, bez spacji.
+# Może to być np. id z GET /api/v1/auth/me (to samo konto admina) albo userId gracza z rejestracji.
+# "amount": "1000" zostaw jako string w cudzysłowach. Send Request nad POST.
+# Po sukcesie (message: Konto zasilone…) wyślij ponownie GET /wallet/me powyżej — balance powinno wzrosnąć o 1000.
 POST https://api.apexpay.pl/api/v1/wallet/fund
 Authorization: Bearer {{token}}
 Content-Type: application/json
