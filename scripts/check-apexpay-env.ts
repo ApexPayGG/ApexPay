@@ -57,11 +57,28 @@ function warnIfAmbiguousUrlCredentials(label: string, raw: string | undefined): 
   if (raw === undefined || raw.trim() === "") return;
   const n = countAtInUrlAuthority(raw);
   if (n > 1) {
-    console.warn(
+    // stdout (jak pozostałe linie), żeby kolejność komunikatów w CI / PowerShell była czytelna
+    console.log(
       `[ops:check-env] UWAGA (${label}): w części po '//' przed '/' jest ${n}× znak '@'. ` +
         "Prawdopodobnie hasło w URL zawiera niezakodowane znaki — użyj percent-encoding w tym URL-u " +
         "(np. @ → %40, : → %3A, / → %2F, ? → %3F, # → %23). W osobnych zmiennych *_PASSWORD możesz trzymać surowe hasło.",
     );
+  }
+}
+
+/** Odczyt loginu z postgres(ql)://user:…@host (wymaga poprawnego URL; przy wielu @ w authority — pomijaj). */
+function extractPostgresUrlUsername(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!/^postgres(ql)?:\/\//i.test(trimmed)) return null;
+  try {
+    const fakeHttp = trimmed
+      .replace(/^postgresql:\/\//i, "http://")
+      .replace(/^postgres:\/\//i, "http://");
+    const u = new URL(fakeHttp);
+    if (u.username === "") return null;
+    return decodeURIComponent(u.username);
+  } catch {
+    return null;
   }
 }
 
@@ -71,6 +88,36 @@ const envFileLooksProd =
   envPath !== undefined &&
   (envPath.includes(".env.prod") || envPath.endsWith("prod"));
 const treatAsProd = isProd || envFileLooksProd;
+
+warnIfAmbiguousUrlCredentials("DATABASE_URL", process.env.DATABASE_URL);
+warnIfAmbiguousUrlCredentials("RABBITMQ_URL", process.env.RABBITMQ_URL);
+warnIfAmbiguousUrlCredentials("REDIS_URL", process.env.REDIS_URL);
+
+if (
+  isSet("DATABASE_URL") &&
+  isSet("POSTGRES_USER") &&
+  process.env.DATABASE_URL !== undefined
+) {
+  const dbUrl = process.env.DATABASE_URL.trim();
+  if (countAtInUrlAuthority(dbUrl) <= 1) {
+    const urlUser = extractPostgresUrlUsername(dbUrl);
+    const pgUser = process.env.POSTGRES_USER!.trim();
+    if (urlUser === null) {
+      console.log(
+        "[ops:check-env] UWAGA: nie udało się odczytać użytkownika z DATABASE_URL — sprawdź format URL i kodowanie hasła.",
+      );
+    } else if (urlUser !== pgUser) {
+      console.log(
+        `[ops:check-env] BŁĄD: login w DATABASE_URL ("${urlUser}") ≠ POSTGRES_USER ("${pgUser}"). ` +
+          "Przy Postgresie w Dockerze muszą być zgodne (inaczej P1000 / „role does not exist”). " +
+          "Albo dopasuj oba pola, albo usuń POSTGRES_USER z pliku, jeśli używasz wyłącznie zewnętrznej bazy.",
+      );
+      failed = true;
+    } else {
+      console.log("[ops:check-env] OK: login w DATABASE_URL = POSTGRES_USER");
+    }
+  }
+}
 
 for (const c of checks) {
   const ok = isSet(c.name);
@@ -91,10 +138,6 @@ if (treatAsProd && !isSet("PSP_DEPOSIT_WEBHOOK_SECRET")) {
     "[ops:check-env] Uwaga (prod): PSP_DEPOSIT_WEBHOOK_SECRET — webhook wpłat będzie zwracał 503.",
   );
 }
-
-warnIfAmbiguousUrlCredentials("DATABASE_URL", process.env.DATABASE_URL);
-warnIfAmbiguousUrlCredentials("RABBITMQ_URL", process.env.RABBITMQ_URL);
-warnIfAmbiguousUrlCredentials("REDIS_URL", process.env.REDIS_URL);
 
 if (failed) {
   console.error("[ops:check-env] Zakończono błędem.");
