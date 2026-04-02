@@ -9,10 +9,20 @@ Minimum settings recommended for `main` in GitHub branch protection:
 
 ## Required status checks
 
-Use these checks from workflow `CI`:
+W interfejsie GitHub pełna nazwa checka to zwykle **`Nazwa workflow / Nazwa joba`** (nie samo `Test`).
 
-- `Secrets Scan`
-- `Test`
+Dla pliku `.github/workflows/ci.yml` (pierwsza linia: `name: CI`) użyj dokładnie:
+
+- **`CI / Secrets Scan`**
+- **`CI / Test`**
+
+W wyszukiwarce „Dodaj czeki” wybierz wpisy, które **dokładnie** tak wyglądają (czasem dopisek `(pull_request)` jest tylko w widoku PR — w regule zapisuje się sama para workflow/job).
+
+### Typowy błąd: „Czekam na status” mimo zielonego CI
+
+Jeśli w regułach masz np. **`secrets scan`** lub samo **`test`** (małe litery, bez prefiksu `CI /`), GitHub **będzie czekał w nieskończoność**, bo **żaden job tak się nie nazywa**. Usuń te wpisy i dodaj **`CI / Secrets Scan`** oraz **`CI / Test`**.
+
+Opcjonalnie, jeśli chcesz wymuszać też stress testy, dodaj check z workflow **Transaction stress tests** (nazwa dokładnie jak w **Akcje** po ostatnim zielonym uruchomieniu).
 
 These checks enforce:
 
