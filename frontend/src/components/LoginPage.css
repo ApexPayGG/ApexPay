@@ -1,0 +1,306 @@
+.login-page {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem 2.5rem;
+  overflow: hidden;
+}
+
+/* Subtelna poświata marki — dekor, nie interakcja */
+.login-page__glow {
+  pointer-events: none;
+  position: absolute;
+  width: min(120vw, 720px);
+  height: min(120vw, 720px);
+  top: -35%;
+  right: -25%;
+  background: radial-gradient(
+    circle at 30% 40%,
+    color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+    transparent 62%
+  );
+  filter: blur(48px);
+  opacity: 0.85;
+}
+
+.login-page__glow--secondary {
+  top: auto;
+  bottom: -40%;
+  left: -20%;
+  right: auto;
+  width: min(100vw, 520px);
+  height: min(100vw, 520px);
+  background: radial-gradient(
+    circle at 60% 50%,
+    color-mix(in srgb, var(--accent) 10%, transparent) 0%,
+    transparent 55%
+  );
+  filter: blur(40px);
+  opacity: 0.6;
+}
+
+.login-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 2rem 1.75rem 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--card-shadow);
+}
+
+.login-card::before {
+  content: "";
+  display: block;
+  height: 3px;
+  width: 48px;
+  border-radius: 2px;
+  background: var(--accent);
+  margin-bottom: 1.25rem;
+}
+
+.login-card__brand {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.login-card__tagline {
+  margin: 0 0 1.75rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.login-error {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+}
+
+.login-error[hidden] {
+  display: none;
+}
+
+.login-error__icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: var(--danger);
+}
+
+.login-success {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--success-soft);
+  border: 1px solid var(--success-border);
+  border-radius: 10px;
+}
+
+.login-success[hidden] {
+  display: none;
+}
+
+.login-success__icon {
+  flex-shrink: 0;
+  margin-top: 0.08rem;
+  color: var(--success);
+}
+
+.login-field {
+  margin-bottom: 1.1rem;
+}
+
+.login-field__label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.login-field__wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.login-field__input {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-field__input::placeholder {
+  color: var(--text-faint);
+}
+
+.login-field__input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.login-field__input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.login-field__input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.login-field__wrap--password .login-field__input {
+  padding-right: 3rem;
+}
+
+.login-field__toggle {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.login-field__toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 60%, var(--border));
+}
+
+.login-field__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.login-field--error .login-field__input {
+  border-color: var(--danger-border);
+}
+
+.login-field--error .login-field__input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.login-submit {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.75rem 1rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.02em;
+  background: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, #000);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.login-submit:active:not(:disabled) {
+  background: var(--accent-active);
+  transform: scale(0.99);
+}
+
+.login-submit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.login-submit:disabled {
+  background: var(--surface-2);
+  color: var(--text-faint);
+  border-color: var(--border);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Ładowanie: zostajemy na fioletowym CTA (bez „martwego” szarego przycisku) */
+.login-submit.login-submit--loading:disabled {
+  background: var(--accent);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--accent) 70%, #000);
+  opacity: 0.92;
+  cursor: wait;
+  transform: none;
+}
+
+.login-submit.login-submit--loading:disabled:hover {
+  background: var(--accent);
+}
+
+.login-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-top: 1.35rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.login-links a {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: 6px;
+  transition: color 0.15s ease;
+}
+
+.login-links a:hover {
+  color: var(--accent-2);
+}
+
+.login-links a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.login-links__register {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.login-links__register:hover {
+  color: var(--accent-2);
+}

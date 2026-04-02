@@ -48,6 +48,9 @@ model Transaction {
   walletId    String
   wallet      Wallet          @relation(fields: [walletId], references: [id])
   createdAt   DateTime        @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([walletId, createdAt(sort: Desc)])
 }
 
 enum TransactionType {
@@ -133,6 +136,8 @@ model UserBalanceLedger {
   createdAt   DateTime @default(now())
   user        User     @relation(fields: [userId], references: [id])
 
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([matchId, createdAt(sort: Desc)])
   @@map("user_balances")
 }
 

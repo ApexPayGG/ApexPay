@@ -139,8 +139,43 @@ export function createApp(options) {
     app.post("/api/v1/matches/:id/resolve", hmacSignature, authMiddleware, resolveRateLimit, idempotencyResolve, (req, res) => {
         void matchResolveV1.resolve(req, res);
     });
+    /** Zbudowany React (Vite): jeden port z API — `APEXPAY_WEB_UI_DIR=./frontend/dist npm start` */
+    const webUiDir = process.env.APEXPAY_WEB_UI_DIR?.trim();
+    if (webUiDir !== undefined && webUiDir.length > 0) {
+        const abs = path.resolve(process.cwd(), webUiDir);
+        app.use(express.static(abs, {
+            index: false,
+            fallthrough: true,
+        }));
+        app.use((req, res, next) => {
+            if (req.method !== "GET" && req.method !== "HEAD") {
+                next();
+                return;
+            }
+            const p = req.path;
+            if (p.startsWith("/api") ||
+                p.startsWith("/health") ||
+                p.startsWith("/metrics") ||
+                p.startsWith("/internal") ||
+                p.startsWith("/socket.io")) {
+                next();
+                return;
+            }
+            res.sendFile(path.join(abs, "index.html"), (err) => {
+                if (err)
+                    next(err);
+            });
+        });
+    }
     app.use((err, _req, res, _next) => {
         console.error(err);
+        const parseErr = err;
+        if (parseErr.type === "entity.parse.failed" ||
+            parseErr.status === 400 ||
+            parseErr.statusCode === 400) {
+            sendApiError(res, 400, ApiErrorCode.BAD_REQUEST, "Invalid JSON body");
+            return;
+        }
         sendApiError(res, 500, ApiErrorCode.INTERNAL, "Internal Server Error");
     });
     return { app, httpServer, wsService };

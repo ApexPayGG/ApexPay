@@ -1,3 +1,4 @@
+import path from "node:path";
 import "dotenv/config";
 const requiredEnvs = ["DATABASE_URL", "JWT_SECRET"];
 for (const env of requiredEnvs) {
@@ -30,6 +31,9 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const redis = new Redis(redisUrl);
+redis.on("error", (err) => {
+  console.error("[Redis]", err.message, "— uruchom Redis (np. docker compose up -d redis).");
+});
 
 const { app, httpServer } = createApp({ prisma, redis });
 
@@ -58,9 +62,13 @@ const outboxCleanup = new OutboxCleanupService(prisma);
 outboxCleanup.start();
 
 const PORT = Number(process.env.PORT) || 3000;
+const webUi = process.env.APEXPAY_WEB_UI_DIR?.trim();
 httpServer.listen(PORT, () => {
   console.log(`[ApexPay Core] Silnik gotowy na porcie ${PORT}`);
   console.log(`[ApexPay WS] Nasłuch WebSocket aktywny`);
+  if (webUi !== undefined && webUi.length > 0) {
+    console.log(`[ApexPay Web] UI statyczne: ${path.resolve(process.cwd(), webUi)} → http://localhost:${PORT}/`);
+  }
 });
 
 async function shutdown(signal: string): Promise<void> {
