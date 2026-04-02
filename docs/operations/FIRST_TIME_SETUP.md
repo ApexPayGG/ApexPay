@@ -148,11 +148,14 @@ muszą być m.in. (nazwy jak w `docker-compose.prod.yml`):
 - `REDIS_URL` — zwykle `redis://redis:6379` wewnątrz sieci Compose.
 - `RABBITMQ_URL`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`
 - `ACME_EMAIL` — email do Let’s Encrypt (Traefik).
-- `DOMAIN_NAME` — FQDN API, np. `api.twojadomena.pl`
+- `API_DOMAIN` — FQDN API, np. `api.twojadomena.pl`
+- `APP_DOMAIN` — FQDN frontendu, np. `apexpay.pl`
 - `JWT_SECRET` (powtórzenie świadome — tylko jedna zmienna w pliku)
 - **`APEXPAY_API_IMAGE`** — pełny adres obrazu z GHCR, np.  
   `ghcr.io/owner/repo/apexpay-api:latest`  
   (workflow deploy ustawia to samo w sesji shell — **musisz** mieć spójność z tym, co buduje CI; najprościej ustawić w `.env.prod` ten sam URL co w GHCR).
+- **`APEXPAY_WEB_IMAGE`** — pełny adres obrazu frontendu z GHCR, np.  
+  `ghcr.io/owner/repo/apexpay-web:latest`.
 
 Dodatkowo dla API (sekcja `environment` serwisu `api` — jeśli rozszerzysz compose o `env_file` dla `api`, albo przez `environment` z interpolacji):
 
@@ -169,7 +172,7 @@ Dodatkowo dla API (sekcja `environment` serwisu `api` — jeśli rozszerzysz com
 
 **DNS:** rekord **A** (lub **AAAA**) dla `api.twojadomena.pl` → publiczny IP serwera.
 
-Po starcie stacku Traefik wystawia certyfikat TLS dla `${DOMAIN_NAME}` (wartość z `.env.prod`), o ile porty 80/443 są osiągalne z internetu (challenge HTTP/TLS zależnie od konfiguracji — u Ciebie w compose jest TLS challenge).
+Po starcie stacku Traefik wystawia certyfikat TLS dla `${API_DOMAIN}` i `${APP_DOMAIN}` (wartości z `.env.prod`), o ile porty 80/443 są osiągalne z internetu.
 
 ---
 

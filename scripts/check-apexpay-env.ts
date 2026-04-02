@@ -30,6 +30,10 @@ const checks: Check[] = [
   { name: "REDIS_URL", optional: true },
   { name: "RABBITMQ_URL", optional: true },
   { name: "PSP_DEPOSIT_WEBHOOK_SECRET", optional: true, prodRecommended: true },
+  { name: "API_DOMAIN", optional: true, prodRecommended: true },
+  { name: "APP_DOMAIN", optional: true, prodRecommended: true },
+  { name: "APEXPAY_WEB_IMAGE", optional: true, prodRecommended: true },
+  { name: "CORS_ORIGIN", optional: true, prodRecommended: true },
 ];
 
 function isSet(name: string): boolean {
@@ -39,6 +43,10 @@ function isSet(name: string): boolean {
 
 let failed = false;
 const isProd = process.env.NODE_ENV === "production";
+const envFileLooksProd =
+  envPath !== undefined &&
+  (envPath.includes(".env.prod") || envPath.endsWith("prod"));
+const treatAsProd = isProd || envFileLooksProd;
 
 for (const c of checks) {
   const ok = isSet(c.name);
@@ -46,7 +54,7 @@ for (const c of checks) {
     console.error(`[ops:check-env] BRAK (wymagane): ${c.name}`);
     failed = true;
   } else if (!ok && c.optional) {
-    const tag = c.prodRecommended && isProd ? "zalecane w prod" : "opcjonalne";
+    const tag = c.prodRecommended && treatAsProd ? "zalecane w prod" : "opcjonalne";
     // stdout (nie stderr), żeby kolejność komunikatów była przewidywalna w CI / Windows
     console.log(`[ops:check-env] Pominięte (${tag}): ${c.name}`);
   } else if (ok) {
@@ -54,7 +62,7 @@ for (const c of checks) {
   }
 }
 
-if (isProd && !isSet("PSP_DEPOSIT_WEBHOOK_SECRET")) {
+if (treatAsProd && !isSet("PSP_DEPOSIT_WEBHOOK_SECRET")) {
   console.log(
     "[ops:check-env] Uwaga (prod): PSP_DEPOSIT_WEBHOOK_SECRET — webhook wpłat będzie zwracał 503.",
   );

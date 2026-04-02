@@ -55,11 +55,20 @@ export function createApp(options: CreateAppOptions): {
   wsService: WebSocketService;
 } {
   const app = express();
+  const trustProxy = process.env.TRUST_PROXY?.trim();
+  if (trustProxy !== undefined && trustProxy.length > 0) {
+    app.set("trust proxy", trustProxy);
+  }
 
   app.use(helmet());
+  const corsOriginEnv = process.env.CORS_ORIGIN?.trim();
+  const corsAllowedOrigins =
+    corsOriginEnv === undefined || corsOriginEnv.length === 0
+      ? null
+      : corsOriginEnv.split(",").map((origin) => origin.trim()).filter(Boolean);
   app.use(
     cors({
-      origin: true,
+      origin: corsAllowedOrigins ?? true,
       credentials: true,
     }),
   );
@@ -134,10 +143,22 @@ export function createApp(options: CreateAppOptions): {
     void pspDepositWebhookController.handle(req, res);
   });
 
+  const authRateWindowMs = Number(process.env.AUTH_RATE_WINDOW_MS ?? "60000");
+  const authRateMaxRequests = Number(process.env.AUTH_RATE_MAX_REQUESTS ?? "25");
   const authPostRateLimit = createSlidingWindowRateLimit(options.redis, {
-    windowMs: 60_000,
-    maxRequests: 25,
+    windowMs: Number.isFinite(authRateWindowMs) ? authRateWindowMs : 60_000,
+    maxRequests: Number.isFinite(authRateMaxRequests) ? authRateMaxRequests : 25,
     keyPrefix: "ratelimit:sliding:v1:auth:ip",
+    keyFromRequest: clientIpForRateLimit,
+  });
+  const adminFundRateWindowMs = Number(process.env.ADMIN_FUND_RATE_WINDOW_MS ?? "60000");
+  const adminFundRateMaxRequests = Number(process.env.ADMIN_FUND_RATE_MAX_REQUESTS ?? "20");
+  const adminFundRateLimit = createSlidingWindowRateLimit(options.redis, {
+    windowMs: Number.isFinite(adminFundRateWindowMs) ? adminFundRateWindowMs : 60_000,
+    maxRequests: Number.isFinite(adminFundRateMaxRequests)
+      ? adminFundRateMaxRequests
+      : 20,
+    keyPrefix: "ratelimit:sliding:v1:wallet-fund:ip",
     keyFromRequest: clientIpForRateLimit,
   });
   const authRouter = createAuthRouter(authController, {
@@ -177,6 +198,7 @@ export function createApp(options: CreateAppOptions): {
 
   app.post(
     "/api/wallet/fund",
+    adminFundRateLimit,
     authMiddleware,
     requireRole([UserRole.ADMIN]),
     (req, res) => {
@@ -185,6 +207,7 @@ export function createApp(options: CreateAppOptions): {
   );
   app.post(
     "/api/v1/wallet/fund",
+    adminFundRateLimit,
     authMiddleware,
     requireRole([UserRole.ADMIN]),
     (req, res) => {
