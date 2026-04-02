@@ -1,15 +1,18 @@
-[title]
-description = "ApexPay gitleaks config"
+title = "ApexPay gitleaks config"
 
 [allowlist]
 description = "Safe placeholders and local templates"
 paths = [
   '''(^|/)\\.env\\.example$''',
+  '''(^|/)\\.env\\.prod\\.example$''',
   '''(^|/)test\\.http\\.example$''',
 ]
 regexes = [
   '''WKLEJ_TUTAJ.*''',
   '''ci-test-secret''',
   '''zamien_na_dlugi_losowy_ciag_min_32_znaki''',
+  '''replace_with_long_random_secret''',
+  '''change_me''',
+  '''secretpassword123''',
 ]
 
