@@ -16,15 +16,19 @@ jobs:
     name: Secrets Scan
     runs-on: ubuntu-latest
     steps:
+      # Gitleaks na PR porównuje zakres commitów — shallow clone (domyślne) powoduje
+      # "unknown revision" i pada job. Pełna historia jest wymagana.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Gitleaks scan (working tree)
+      # v2 nie ma `inputs` (with.args jest ignorowane); używa wbudowanego skanu PR/push
+      # i automatycznie ładuje `.gitleaks.toml` z repozytorium.
+      - name: Gitleaks scan
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: detect --no-git --source . --redact --config .gitleaks.toml
 
   test:
     name: Test
