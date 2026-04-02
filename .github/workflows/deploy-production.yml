@@ -93,7 +93,9 @@ jobs:
               COMPOSE_CMD="$COMPOSE_CMD --env-file .env.prod"
             fi
 
-            $COMPOSE_CMD pull api api-migrator web
+            # Pobierz obrazy dla wszystkich serwisów z pliku compose na serwerze (bez listy nazw —
+            # stary compose bez `web` nie wywali się na `pull ... web`).
+            $COMPOSE_CMD pull
 
             set +e
             $COMPOSE_CMD up -d
