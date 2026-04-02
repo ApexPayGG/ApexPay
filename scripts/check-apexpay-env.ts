@@ -41,6 +41,30 @@ function isSet(name: string): boolean {
   return v !== undefined && v.length > 0;
 }
 
+/** Authority = fragment między scheme:// a pierwszym / ? # (bez query). */
+function countAtInUrlAuthority(raw: string): number {
+  const m = raw.trim().match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i);
+  if (m === null) return 0;
+  const authority = m[1];
+  return (authority.match(/@/g) ?? []).length;
+}
+
+/**
+ * W URI typu postgres(ql)://user:hasło@host więcej niż jeden `@` w authority zwykle oznacza
+ * niezakodowane `@` (lub inne znaki źle wstawione) w haśle — parser urwie hasło przy pierwszym `@`.
+ */
+function warnIfAmbiguousUrlCredentials(label: string, raw: string | undefined): void {
+  if (raw === undefined || raw.trim() === "") return;
+  const n = countAtInUrlAuthority(raw);
+  if (n > 1) {
+    console.warn(
+      `[ops:check-env] UWAGA (${label}): w części po '//' przed '/' jest ${n}× znak '@'. ` +
+        "Prawdopodobnie hasło w URL zawiera niezakodowane znaki — użyj percent-encoding w tym URL-u " +
+        "(np. @ → %40, : → %3A, / → %2F, ? → %3F, # → %23). W osobnych zmiennych *_PASSWORD możesz trzymać surowe hasło.",
+    );
+  }
+}
+
 let failed = false;
 const isProd = process.env.NODE_ENV === "production";
 const envFileLooksProd =
@@ -67,6 +91,10 @@ if (treatAsProd && !isSet("PSP_DEPOSIT_WEBHOOK_SECRET")) {
     "[ops:check-env] Uwaga (prod): PSP_DEPOSIT_WEBHOOK_SECRET — webhook wpłat będzie zwracał 503.",
   );
 }
+
+warnIfAmbiguousUrlCredentials("DATABASE_URL", process.env.DATABASE_URL);
+warnIfAmbiguousUrlCredentials("RABBITMQ_URL", process.env.RABBITMQ_URL);
+warnIfAmbiguousUrlCredentials("REDIS_URL", process.env.REDIS_URL);
 
 if (failed) {
   console.error("[ops:check-env] Zakończono błędem.");
