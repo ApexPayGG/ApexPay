@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.meta.outputs.image }}
+      web_image: ${{ steps.meta.outputs.web_image }}
     steps:
       - name: Checkout (commit z zakończonego CI)
         uses: actions/checkout@v4
@@ -38,6 +39,7 @@ jobs:
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "image=ghcr.io/${REPO_LOWER}/apexpay-api:latest" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/${REPO_LOWER}/apexpay-web:latest" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -53,6 +55,16 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.image }}
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.web
+          push: true
+          tags: ${{ steps.meta.outputs.web_image }}
+          build-args: |
+            VITE_API_URL=${{ vars.VITE_API_URL }}
 
   deploy:
     name: Deploy
@@ -74,13 +86,14 @@ jobs:
             cd /opt/apexpay-api
             REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
             export APEXPAY_API_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-api:latest"
+            export APEXPAY_WEB_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-web:latest"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
             COMPOSE_CMD="docker compose -f docker-compose.prod.yml"
             if [ -f .env.prod ]; then
               COMPOSE_CMD="$COMPOSE_CMD --env-file .env.prod"
             fi
 
-            $COMPOSE_CMD pull api api-migrator
+            $COMPOSE_CMD pull api api-migrator web
 
             set +e
             $COMPOSE_CMD up -d

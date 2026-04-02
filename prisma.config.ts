@@ -1,11 +1,13 @@
-import { defineConfig } from '@prisma/config';
+import "dotenv/config";
+import { defineConfig } from "@prisma/config";
 
-// Architektura Cloud-Native: usunięto import 'dotenv/config'.
-// W środowisku produkcyjnym (Hetzner) zmienne środowiskowe są wstrzykiwane 
-// bezpośrednio do pamięci procesu przez silnik Dockera.
+// Lokalnie: `dotenv` wczytuje `.env` przed `migrate` / `generate` / `validate`.
+// W prod zmienne i tak mogą być wstrzyknięte przez runtime (Docker) — wtedy .env nie jest wymagany.
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("KRYTYCZNY BŁĄD ARCHITEKTURY: Brak zmiennej DATABASE_URL w środowisku. Skonfiguruj połączenie z bazą danych przed uruchomieniem silnika ApexPay!");
+  throw new Error(
+    "KRYTYCZNY BŁĄD ARCHITEKTURY: Brak zmiennej DATABASE_URL. Utwórz plik .env w katalogu głównym (wg .env.example) lub ustaw zmienną w shellu.",
+  );
 }
 
 export default defineConfig({

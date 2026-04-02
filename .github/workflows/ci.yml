@@ -12,6 +12,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secrets:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    steps:
+      # Gitleaks na PR porównuje zakres commitów — shallow clone (domyślne) powoduje
+      # "unknown revision" i pada job. Pełna historia jest wymagana.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # v2 nie ma `inputs` (with.args jest ignorowane); używa wbudowanego skanu PR/push
+      # i automatycznie ładuje `.gitleaks.toml` z repozytorium.
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -28,6 +46,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
       - name: Prisma generate
         env:
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
@@ -38,7 +59,19 @@ jobs:
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
         run: npx prisma validate
 
+      - name: Lint + typecheck (api + web)
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+          JWT_SECRET: ci-test-secret
+        run: npm run lint && npm run typecheck
+
       - name: Unit tests
         env:
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
         run: npm test
+
+      - name: Build (api + web)
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+          JWT_SECRET: ci-test-secret
+        run: npm run build:all
