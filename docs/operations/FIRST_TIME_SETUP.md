@@ -17,7 +17,8 @@ Ten dokument zbiera **konkretne linki** do dokumentacji vendorów oraz ścieżki
 9. [Webhook Slack — tworzenie URL](#9-webhook-slack--tworzenie-url)
 10. [Webhook wpłat PSP (`PSP_DEPOSIT_WEBHOOK_SECRET`)](#10-webhook-wpłat-psp)
 11. [Weryfikacja lokalna (skrypt w repo)](#11-weryfikacja-lokalna-skrypt-w-repo)
-12. [Czego nie da się „zrobić zdalnie” za Ciebie](#12-czego-nie-da-się-zrobić-zdalnie-za-ciebie)
+12. [Deploy: api-migrator / P1000 / „Role does not exist”](#12-deploy-api-migrator--prisma-p1000-albo-role-does-not-exist)
+13. [Czego nie da się „zrobić zdalnie” za Ciebie](#13-czego-nie-da-się-zrobić-zdalnie-za-ciebie)
 
 ---
 
@@ -219,7 +220,23 @@ Skrypt sprawdza obecność kluczowych zmiennych (bez wyświetlania wartości sek
 
 ---
 
-## 12. Czego nie da się „zrobić zdalnie” za Ciebie
+## 12. Deploy: `api-migrator` / Prisma `P1000` albo „Role does not exist”
+
+**Objawy w logach:** `Authentication failed` (P1000), w logu Postgresa `FATAL: password authentication failed` oraz **`Role "…" does not exist`**.
+
+**Przyczyny (często łączone):**
+
+1. **Zły parsing `DATABASE_URL`** — znak `@` (lub inne znaki specjalne) w haśle **bez** kodowania `%40` itd. Wtedy „użytkownik” odczytany z URL nie istnieje w Postgresie. Uruchom `npm run ops:check-env -- --env-file=.env.prod` — skrypt ostrzega przy więcej niż jednym `@` w authority URL.
+
+2. **Stary wolumen danych Postgresa** — przy pierwszym starcie kontenera tworzone są role z **`POSTGRES_USER`** / hasło z **`POSTGRES_PASSWORD`**. Jeśli w logu jest *„Skipping initialization”*, katalog danych **już istnieje** i **zmiana** `POSTGRES_USER` w `.env.prod` **nie tworzy** nowej roli. `DATABASE_URL` musi używać **tego samego** użytkownika (i hasła), który został utworzony przy **pierwszej** inicjalizacji wolumenu — albo ręcznie utwórz rolę w `psql`, albo (świadomie, **kasując dane**) usuń wolumen i postaw Postgres od zera ze spójnymi zmiennymi.
+
+3. **Niespójność `POSTGRES_*` vs `DATABASE_URL`** — użytkownik i hasło w connection stringu muszą być zgodne z tym, co Postgres faktycznie ma (i z tym, co jest w compose).
+
+**Docker credential helper (ostrzeżenie przy `docker login`):** komunikat o `config.json` to tylko informacja; nie blokuje migracji. Można później skonfigurować [credential store](https://docs.docker.com/go/credential-store/).
+
+---
+
+## 13. Czego nie da się „zrobić zdalnie” za Ciebie
 
 - **Zalogowanie się** na Twoje konto GitHub, Slack, dostawcę VPS — musisz Ty (lub zespół z dostępem).
 - **Wklejenie sekretów** w GitHub / na serwer — tylko z Twojej przeglądarki lub bezpiecznego kanału.
