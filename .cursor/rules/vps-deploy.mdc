@@ -8,6 +8,8 @@ alwaysApply: true
 - **Sesja SSH = Linux.** Nigdy nie podawaj ścieżek Windows (`C:\...`, `C:\Workspace_...`). Na serwerze używaj wyłącznie ścieżek uniksowych, np. `/opt/apexpay-api`.
 - **Katalog deployu na VPS** jest często **tylko kopią plików** — może **nie być** repozytorium Git (`fatal: not a git repository`). Nie zakładaj `git pull` w `/opt/apexpay-api`, dopóki użytkownik jawnie nie sklonuje repo tam lub nie doda `.git`.
 - **Na VPS nie zakładaj `npm` ani `node`** poza kontenerami. Aktualizacja Traefika to **`docker compose`** + pliki `docker-compose*.yml` i `.env.prod`.
+- **`docker compose pull` obrazów z `ghcr.io`** uruchamiaj **na VPS** (albo `npm run ops:vps-web`), nie w lokalnym Dockerze na Windows — inaczej `denied` i brak logowania do GHCR. Katalog `/opt/apexpay-api` istnieje tylko po SSH; lokalnie używaj `C:\...\Workspace_SkillGaming`.
+- Skrypty **bash (`.sh`)** przed `scp` muszą mieć **LF** — w repo pomaga `scripts/vps-ssh-helpers.ps1` (normalizacja przy wgrywaniu `refresh-traefik.sh`).
 - **Wersja obrazu Traefika** wynika z **`docker-compose.prod.yml` na serwerze.** Jeśli `docker compose pull traefik` pobiera stare `v3.0`, plik na VPS jest niezsynchronizowany z repozytorium — trzeba **nadpisać** go (np. `scp` z maszyny dev albo jednorazowo `git clone` w innym katalogu i skopiować plik).
 - **Z maszyny deweloperskiej (Windows, repo lokalne)** z działającym `ssh`/`scp`: `npm run ops:vps-traefik` — wgrywa `docker-compose.prod.yml` i odpala przeładowanie Traefika (patrz `scripts/vps-update-traefik-compose.ps1`).
 - **Tylko na VPS (bez npm):** `bash /opt/apexpay-api/refresh-traefik.sh` po jednorazowym skopiowaniu tego skryptu obok compose (robi to ten sam skrypt PowerShell).
