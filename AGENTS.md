@@ -8,4 +8,6 @@
 4. **Bezpieczeństwo** — bez sekretów w kodzie i commitach; bez prośby o hasła użytkownika.
 5. **VPS / SSH** — zasady w `.cursor/rules/vps-deploy.mdc`; skrypty `npm run ops:vps-*` gdy działa klucz SSH.
 
-Szczegóły techniczne reguły Cursor: `.cursor/rules/execute-in-cursor.mdc` (always apply).
+Szczegóły techniczne reguły Cursor: `.cursor/rules/execute-in-cursor.mdc` (`alwaysApply: true` + opis **USE WHEN**).
+
+**Włączenie w Cursorze (UI):** *Cursor Settings* → *Rules* → przy regule z projektu włącz **globus** („Always apply” / dołączanie do kontekstu), jeśli widzisz taką opcję. Pliki `.mdc` edytujesz normalnie jako tekst dzięki `.vscode/settings.json` (`*.mdc` → default editor).

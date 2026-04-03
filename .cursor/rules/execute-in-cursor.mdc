@@ -1,5 +1,5 @@
 ---
-description: Wykonuj pracę w Cursorze — terminal, testy, zapis plików, weryfikacja
+description: "USE WHEN dowolne zadanie w repo ApexPay — zawsze stosuj: terminal (npm test, typecheck, git), zapis plików w workspace, nie tylko instrukcje dla użytkownika."
 alwaysApply: true
 ---
 
