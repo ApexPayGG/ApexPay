@@ -1,0 +1,13 @@
+---
+description: Wdrożenie na VPS (SSH, Docker, brak git/npm na serwerze)
+alwaysApply: true
+---
+
+# Wdrożenie produkcyjne (VPS Linux)
+
+- **Sesja SSH = Linux.** Nigdy nie podawaj ścieżek Windows (`C:\...`, `C:\Workspace_...`). Na serwerze używaj wyłącznie ścieżek uniksowych, np. `/opt/apexpay-api`.
+- **Katalog deployu na VPS** jest często **tylko kopią plików** — może **nie być** repozytorium Git (`fatal: not a git repository`). Nie zakładaj `git pull` w `/opt/apexpay-api`, dopóki użytkownik jawnie nie sklonuje repo tam lub nie doda `.git`.
+- **Na VPS nie zakładaj `npm` ani `node`** poza kontenerami. Aktualizacja Traefika to **`docker compose`** + pliki `docker-compose*.yml` i `.env.prod`.
+- **Wersja obrazu Traefika** wynika z **`docker-compose.prod.yml` na serwerze.** Jeśli `docker compose pull traefik` pobiera stare `v3.0`, plik na VPS jest niezsynchronizowany z repozytorium — trzeba **nadpisać** go (np. `scp` z maszyny dev albo jednorazowo `git clone` w innym katalogu i skopiować plik).
+- **Z maszyny deweloperskiej (Windows, repo lokalne)** z działającym `ssh`/`scp`: `npm run ops:vps-traefik` — wgrywa `docker-compose.prod.yml` i odpala przeładowanie Traefika (patrz `scripts/vps-update-traefik-compose.ps1`).
+- **Tylko na VPS (bez npm):** `bash /opt/apexpay-api/refresh-traefik.sh` po jednorazowym skopiowaniu tego skryptu obok compose (robi to ten sam skrypt PowerShell).
