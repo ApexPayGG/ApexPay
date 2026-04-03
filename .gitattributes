@@ -1,0 +1,2 @@
+# Skrypty bash muszą mieć LF — CRLF psuje `set -o pipefail` na Linuxie po scp.
+*.sh text eol=lf
