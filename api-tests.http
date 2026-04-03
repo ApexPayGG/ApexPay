@@ -69,7 +69,8 @@ Authorization: Bearer {{token}}
   "registrationEndsInHours": 48
 }
 
-### 4b. Lista turniejów (opcjonalnie ?limit=20&status=IN_PROGRESS)
+### 4b. Lista turniejów (opcjonalnie ?limit=20&status=REGISTRATION)
+# Odpowiedź: data.items[] — użyj pola tournamentId (CUID) do join.
 GET {{baseUrl}}/tournaments
 Authorization: Bearer {{token}}
 Accept: application/json
@@ -81,8 +82,9 @@ GET {{baseUrl}}/tournaments/{{tournamentId}}
 Authorization: Bearer {{token}}
 Accept: application/json
 
-### 5. Dołącz do turnieju (Gracz)
-# Podmień {{tournamentId}} na ID z odpowiedzi sekcji 4 (pole data.tournamentId).
+### 5. Dołącz do turnieju (escrow wpisowego)
+# tournamentId: z 4b → data.items[].tournamentId LUB z 4 (create) → data.tournamentId.
+# Produkcja z tokenem z przeglądarki: join-tournament.private.http.example → join-tournament.private.http
 @tournamentId = TUTAJ_WKLEJ_ID_TURNIEJU
 POST {{baseUrl}}/tournaments/{{tournamentId}}/join
 Content-Type: application/json

@@ -14,3 +14,4 @@ test.http
 fund-wallet.private.http
 create-tournament.private.http
 start-tournament.private.http
+join-tournament.private.http
