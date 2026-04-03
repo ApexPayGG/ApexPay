@@ -8,3 +8,5 @@ node_modules
 !.env.prod.example
 test.http
 *.local.http
+# Tokeny / CUID do REST Client — kopia lokalna z .example
+fund-wallet.private.http

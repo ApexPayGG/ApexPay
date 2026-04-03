@@ -1,5 +1,17 @@
 {
   "workbench.editorAssociations": {
     "*.mdc": "default"
+  },
+  "rest-client.environmentVariables": {
+    "apexpay-local": {
+      "apexBase": "http://localhost:3000",
+      "apexToken": "",
+      "apexAdminUserId": ""
+    },
+    "apexpay-prod": {
+      "apexBase": "https://apexpay.pl",
+      "apexToken": "",
+      "apexAdminUserId": ""
+    }
   }
 }

@@ -77,7 +77,8 @@ Content-Type: application/json
 Authorization: Bearer {{token}}
 
 ### 6. Produkcja — zasil portfel ADMIN (Etap 1 / ledger)
-# Pełny opis + nagłówek Bearer: patrz też plik fund-wallet.http w katalogu głównym repo.
+# Pełny opis: fund-wallet.http. Prywatne tokeny: fund-wallet.private.http (z .example).
+# Alternatywa: wybierz w REST Client środowisko "apexpay-prod" i uzupełnij tokeny w .vscode/settings.json.
 @prodBase = https://apexpay.pl
 @prodToken = WKLEJ_JWT_Z_LOGOWANIA
 @adminUserId = WKLEJ_CUID_Z_auth_me

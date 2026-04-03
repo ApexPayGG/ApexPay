@@ -1,0 +1,19 @@
+# Skopiuj do fund-wallet.private.http (gitignored) i uzupełnij @token oraz @adminUserId.
+# PowerShell: Copy-Item fund-wallet.private.http.example fund-wallet.private.http
+@base = https://apexpay.pl
+@token =
+@adminUserId =
+
+GET {{base}}/api/v1/auth/me
+Authorization: Bearer {{token}}
+Accept: application/json
+
+POST {{base}}/api/v1/wallet/fund
+Content-Type: application/json
+Authorization: Bearer {{token}}
+Accept: application/json
+
+{
+  "targetUserId": "{{adminUserId}}",
+  "amount": "100000"
+}
