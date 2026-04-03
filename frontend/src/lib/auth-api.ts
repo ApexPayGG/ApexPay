@@ -107,3 +107,76 @@ export function clearStoredAuthToken(): void {
     /* ignore */
   }
 }
+
+export type RegisterResponse = {
+  message: string;
+  userId: string;
+};
+
+function mapRegisterError(status: number, raw: string): string {
+  if (status === 409) {
+    return "Ten adres e-mail jest już zarejestrowany.";
+  }
+  if (status === 400) {
+    if (raw.length > 0) return raw;
+    return "Niepoprawne dane rejestracji.";
+  }
+  if (status === 403) {
+    return "Ta operacja jest niedozwolona.";
+  }
+  if (status >= 500) {
+    return "Serwer jest chwilowo niedostępny. Spróbuj za chwilę.";
+  }
+  return raw.length > 0 ? raw : `Błąd ${status}`;
+}
+
+/**
+ * POST `/api/v1/auth/register` — tworzy konto (bez JWT; po sukcesie zwykle przekieruj na /login).
+ */
+export async function registerWithPassword(
+  email: string,
+  password: string,
+): Promise<RegisterResponse> {
+  const res = await fetch(apiUrl("/api/v1/auth/register"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify({ email, password }),
+  });
+
+  const text = await res.text();
+  let data: unknown = {};
+  if (text.length > 0) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      const looksLikeHtml =
+        text.trimStart().startsWith("<") || /<\s*!doctype\s+html/i.test(text);
+      const hint = looksLikeHtml
+        ? " Odpowiedź nie jest JSON (sprawdź proxy /api i backend)."
+        : "";
+      throw new AuthApiError(
+        `Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`,
+        res.status,
+      );
+    }
+  }
+
+  if (!res.ok) {
+    const errObj = data as { error?: string; message?: string };
+    const raw = String(errObj.error ?? errObj.message ?? "");
+    throw new AuthApiError(mapRegisterError(res.status, raw), res.status);
+  }
+
+  const body = data as Partial<RegisterResponse>;
+  if (typeof body.userId !== "string" || body.userId.length === 0) {
+    throw new AuthApiError("Brak identyfikatora użytkownika w odpowiedzi.", res.status);
+  }
+  return {
+    message: typeof body.message === "string" ? body.message : "Konto utworzone.",
+    userId: body.userId,
+  };
+}

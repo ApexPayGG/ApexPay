@@ -1,10 +1,6 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
-import {
-  AuthApiError,
-  loginWithPassword,
-  persistAuthToken,
-} from "../lib/auth-api.js";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useId, useState, type FormEvent } from "react";
+import { AuthApiError, registerWithPassword } from "../lib/auth-api.js";
+import { Link, useNavigate } from "react-router-dom";
 import "./LoginPage.css";
 
 function isValidEmail(value: string): boolean {
@@ -13,63 +9,44 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
 
-export function LoginPage() {
+const MIN_PASSWORD_LEN = 12;
+
+export function RegisterPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const formId = useId();
   const errorId = `${formId}-error`;
-  const successId = `${formId}-success`;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const st = location.state as { registered?: boolean } | undefined;
-    if (st?.registered === true) {
-      setSuccessMessage("Konto utworzone. Możesz się zalogować.");
-    }
-  }, [location.state]);
 
   const fieldError = error !== null;
 
-  function clearError(): void {
-    setError(null);
-  }
-
-  function clearSuccess(): void {
-    setSuccessMessage(null);
-  }
-
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
-    clearError();
-    clearSuccess();
+    setError(null);
 
     if (!isValidEmail(email)) {
       setError("Podaj prawidłowy adres e-mail.");
       return;
     }
-    if (password.length === 0) {
-      setError("Hasło jest wymagane.");
+    if (password.length < MIN_PASSWORD_LEN) {
+      setError(`Hasło musi mieć co najmniej ${MIN_PASSWORD_LEN} znaków.`);
       return;
     }
 
     setSubmitting(true);
     try {
-      const result = await loginWithPassword(email.trim(), password);
-      persistAuthToken(result.token);
-      setSuccessMessage(`Zalogowano pomyślnie. Witaj, ${result.email}.`);
-      navigate("/dashboard", { replace: true });
+      await registerWithPassword(email.trim(), password);
+      navigate("/login", { replace: true, state: { registered: true } });
     } catch (err) {
       if (err instanceof AuthApiError) {
         setError(err.message);
       } else if (err instanceof TypeError) {
         setError(
-          "Brak połączenia z serwerem. Uruchom backend (np. npm start w katalogu głównym) i odśwież stronę.",
+          "Brak połączenia z serwerem. Uruchom backend i odśwież stronę.",
         );
       } else {
         setError("Wystąpił nieoczekiwany błąd. Spróbuj ponownie.");
@@ -88,32 +65,10 @@ export function LoginPage() {
       <div className="login-page__glow login-page__glow--secondary" aria-hidden />
 
       <div className="login-card">
-        <h1 className="login-card__brand">ApexPay</h1>
+        <h1 className="login-card__brand">Rejestracja</h1>
         <p className="login-card__tagline">
-          Bezpieczne logowanie do portfela i rozgrywki. Połączenie szyfrowane —
-          Twoje dane chronimy tak samo jak saldo.
+          Załóż konto ApexPay — portfel zostanie utworzony automatycznie.
         </p>
-
-        <div
-          id={successId}
-          className="login-success"
-          role="status"
-          aria-live="polite"
-          hidden={successMessage === null}
-        >
-          <span className="login-success__icon" aria-hidden>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M20 6L9 17l-5-5"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <span>{successMessage}</span>
-        </div>
 
         <div
           id={errorId}
@@ -152,8 +107,7 @@ export function LoginPage() {
               disabled={submitting}
               onChange={(ev) => {
                 setEmail(ev.target.value);
-                clearError();
-                clearSuccess();
+                setError(null);
               }}
               aria-invalid={fieldError}
               aria-describedby={fieldError ? errorId : undefined}
@@ -166,20 +120,22 @@ export function LoginPage() {
             <label className="login-field__label" htmlFor={`${formId}-password`}>
               Hasło
             </label>
+            <p className="login-card__tagline" style={{ margin: "0 0 0.5rem" }}>
+              Minimum {MIN_PASSWORD_LEN} znaków.
+            </p>
             <div className="login-field__wrap login-field__wrap--password">
               <input
                 id={`${formId}-password`}
                 className="login-field__input"
                 name="password"
                 type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                placeholder="••••••••"
+                autoComplete="new-password"
+                placeholder="••••••••••••"
                 value={password}
                 disabled={submitting}
                 onChange={(ev) => {
                   setPassword(ev.target.value);
-                  clearError();
-                  clearSuccess();
+                  setError(null);
                 }}
                 aria-invalid={fieldError}
                 aria-describedby={fieldError ? errorId : undefined}
@@ -204,15 +160,14 @@ export function LoginPage() {
             disabled={disableSubmit}
             aria-busy={submitting}
           >
-            {submitting ? "Logowanie…" : "Zaloguj się"}
+            {submitting ? "Tworzenie konta…" : "Zarejestruj się"}
           </button>
         </form>
 
         <div className="login-links">
-          <Link className="login-links__register" to="/rejestracja">
-            Nie masz konta? Zarejestruj się
+          <Link className="login-links__register" to="/login">
+            Masz już konto? Zaloguj się
           </Link>
-          <Link to="/zapomnialem-hasla">Zapomniałem hasła</Link>
         </div>
       </div>
     </div>
