@@ -1,0 +1,13 @@
+---
+description: Wykonuj pracę w Cursorze — terminal, testy, zapis plików, weryfikacja
+alwaysApply: true
+---
+
+# Wykonanie w Cursorze (główny tryb pracy)
+
+- **Realizuj zadania tutaj**, w workspace Cursora: edytuj pliki, zapisuj zmiany, uruchamiaj polecenia w zintegrowanym terminalu. Nie ograniczaj się do opisów „zrób to sam” — jeśli środowisko agenta pozwala (shell, sieć, git), **wykonaj** krok.
+- **Testy:** po istotnych zmianach w kodzie uruchom `npm test` (backend). Po zmianach we frontendzie uruchom `npm run typecheck --prefix frontend` (i/lub `npm run lint --prefix frontend`, jeśli dotyczy). Nie twierdź „działa” bez uruchomionej weryfikacji, o ile nie ma twardego ograniczenia (brak zależności, brak sieci).
+- **Zapis:** wszystkie poprawki zapisuj w plikach repozytorium przez narzędzia edycji — nie zostawiaj „propozycji w czacie” zamiast commitowalnej treści.
+- **Git:** gdy użytkownik prosi o zapis / push / commit, wykonaj `git add`, `git commit`, `git push` w terminalu (z sensownym komunikatem commita), chyba że brak uprawnień lub konflikt — wtedy zdiagnozuj i zaproponuj następny krok.
+- **Granice:** nie wklejaj ani nie przechowuj sekretów (hasła, prywatne klucze, pełne JWT produkcyjne) w plikach ani w commitach. SSH do użytkownika działa tylko jeśli ma skonfigurowany klucz w tej maszynie — wtedy możesz użyć `npm run ops:vps-*`; w przeciwnym razie krótko wyjaśnij limit.
+- **Spójność:** przestrzegaj pozostałych reguł projektu (`.cursorrules`, `vps-deploy.mdc`, TDD tam gdzie wymagane).

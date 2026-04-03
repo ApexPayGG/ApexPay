@@ -4,3 +4,4 @@ Rygor Kodowania: Obowiązuje strict TDD (Test-Driven Development). Zanim napisze
 Security First: Każda operacja na portfelu użytkownika (Entry Fee) MUSI być zamknięta w transakcji bazodanowej ACID. Zawsze waliduj dane wejściowe. Zakaz logowania tokenów JWT i kluczy API.
 Wdrożenie: Zwracaj kompletne, gotowe do uruchomienia pliki. Informuj o zależnościach npm.
 Wdrożenie VPS (SSH, Docker): nie używaj ścieżek Windows na serwerze Linux; nie zakładaj git pull w /opt/apexpay-api ani npm na hoście — zasady w .cursor/rules/vps-deploy.mdc; z Windows: npm run ops:vps-traefik (scp + przeładowanie Traefika).
+Tryb pracy (główny prompt): wykonuj w Cursorze wszystko co możliwe — zapis plików, terminal, testy (`npm test`, typecheck frontend), git commit/push; szczegóły: AGENTS.md oraz .cursor/rules/execute-in-cursor.mdc.
