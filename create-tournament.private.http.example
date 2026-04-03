@@ -1,0 +1,19 @@
+# Etap 2 — utworzenie turnieju (organizator = użytkownik z JWT)
+# Skopiuj: Copy-Item create-tournament.private.http.example create-tournament.private.http
+#
+# API: status REGISTRATION jest ustawiany przez serwer (nie wysyłaj w body).
+# Wpisowe 50 PLN = 5000 groszy → pole entryFeeCents (nie "entryFee").
+@base = https://apexpay.pl
+@token =
+
+POST {{base}}/api/tournaments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+Accept: application/json
+
+{
+  "title": "Turniej testowy — Etap 2 (escrow)",
+  "entryFeeCents": 5000,
+  "maxPlayers": 32,
+  "registrationEndsInHours": 48
+}
