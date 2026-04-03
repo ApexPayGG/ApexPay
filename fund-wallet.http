@@ -1,0 +1,36 @@
+# Etap 1 — zasilenie portfela (tylko rola ADMIN)
+# REST Client (VS Code / Cursor) lub IntelliJ HTTP Client
+#
+# Host: na produkcji możesz użyć tego samego origin co strona (nginx proxy /api → API)
+# albo bezpośrednio subdomeny API.
+@base = https://apexpay.pl
+# Alternatywa:
+# @base = https://api.apexpay.pl
+
+### JWT — wklej token z logowania (DevTools → Network → login → response.token)
+### albo z localStorage: klucz `apexpay_token` na apexpay.pl
+@token = WKLEJ_TUTAJ_SWÓJ_JWT
+
+### ID użytkownika-admina (pole `id` z odpowiedzi POST .../auth/login lub z GET .../auth/me poniżej)
+@adminUserId = WKLEJ_CUID_UŻYTKOWNIKA
+
+### (Opcja) Kto jestem — sprawdź `id` i `role` (musi być ADMIN do fund)
+GET {{base}}/api/v1/auth/me
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Zasil portfel administratora — 1000 PLN = 100_000 groszy (kwota jako string, liczba całkowita > 0)
+POST {{base}}/api/v1/wallet/fund
+Content-Type: application/json
+Authorization: Bearer {{token}}
+Accept: application/json
+
+{
+  "targetUserId": "{{adminUserId}}",
+  "amount": "100000"
+}
+
+### Nagłówek Authorization — składnia
+# Authorization: Bearer <token>
+# W pliku .http zmienne: Authorization: Bearer {{token}}
+# Uwaga: między "Bearer" a {{token}} jest dokładnie jedna spacja.
