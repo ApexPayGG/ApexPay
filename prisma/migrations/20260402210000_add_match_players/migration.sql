@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE "Match" ADD COLUMN "playerAId" TEXT,
+ADD COLUMN "playerBId" TEXT;
+
+-- AddForeignKey
+ALTER TABLE "Match" ADD CONSTRAINT "Match_playerAId_fkey" FOREIGN KEY ("playerAId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "Match" ADD CONSTRAINT "Match_playerBId_fkey" FOREIGN KEY ("playerBId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;

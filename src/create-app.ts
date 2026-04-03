@@ -37,6 +37,7 @@ import { authMiddleware, requireRole } from "./middlewares/auth.middleware.js";
 import { AuthService } from "./services/auth.service.js";
 import { ClearingService } from "./services/clearing.service.js";
 import { MatchSettlementService } from "./services/match-settlement.service.js";
+import { TournamentBracketService } from "./services/tournament-bracket.service.js";
 import { PspDepositWebhookService } from "./services/psp-deposit-webhook.service.js";
 import { WalletService } from "./services/wallet.service.js";
 import { WebSocketService } from "./services/websocket.service.js";
@@ -118,16 +119,18 @@ export function createApp(options: CreateAppOptions): {
   const wsService =
     options.wsService ?? new WebSocketService(httpServer);
 
+  const bracketService = new TournamentBracketService(options.prisma);
   const clearingService = new ClearingService(options.prisma);
   const matchController = new MatchController(
     options.prisma,
     clearingService,
     wsService,
+    bracketService,
   );
 
   const settlementService =
     options.matchSettlementService ??
-    new MatchSettlementService(options.prisma);
+    new MatchSettlementService(options.prisma, bracketService);
   const matchResolveV1 = new MatchResolveV1Controller(
     settlementService,
     wsService,
@@ -222,12 +225,24 @@ export function createApp(options: CreateAppOptions): {
     void walletController.transfer(req, res);
   });
 
+  app.get("/api/tournaments", authMiddleware, (req, res) => {
+    void tournamentController.listTournaments(req as never, res as never);
+  });
+
+  app.get("/api/tournaments/:id", authMiddleware, (req, res) => {
+    void tournamentController.getTournament(req as never, res as never);
+  });
+
   app.post("/api/tournaments", authMiddleware, (req, res) => {
     void tournamentController.createTournament(req as never, res as never);
   });
 
   app.post("/api/tournaments/:id/join", authMiddleware, (req, res) => {
     void tournamentController.joinTournament(req as never, res as never);
+  });
+
+  app.post("/api/tournaments/:id/start", authMiddleware, (req, res) => {
+    void tournamentController.startTournament(req as never, res as never);
   });
 
   app.post("/api/tournaments/:id/cancel", authMiddleware, (req, res) => {

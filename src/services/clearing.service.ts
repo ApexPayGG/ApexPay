@@ -7,11 +7,14 @@ export class ClearingService {
   private readonly PLATFORM_FEE_PERCENT = 10n;
   private readonly ORGANIZER_CUT_PERCENT = 50n;
 
+  /**
+   * @returns true jeśli wykonano wypłatę nagrody (mecz z `awardsTournamentPrize`).
+   */
   async processPayout(
     matchId: string,
     winnerId: string,
     tx: Prisma.TransactionClient,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const match = await tx.match.findUnique({
       where: { id: matchId },
       include: {
@@ -28,12 +31,16 @@ export class ClearingService {
       throw new Error("CRITICAL: Brak danych do rozliczenia.");
     }
 
+    if (!match.awardsTournamentPrize) {
+      return false;
+    }
+
     const t = match.tournament;
     const participantsCount = BigInt(t.participants.length);
     const totalPool = t.entryFee * participantsCount;
 
     if (totalPool === 0n) {
-      return;
+      return true;
     }
 
     const platformTotalFee = (totalPool * this.PLATFORM_FEE_PERCENT) / 100n;
@@ -74,5 +81,7 @@ export class ClearingService {
         },
       });
     }
+
+    return true;
   }
 }

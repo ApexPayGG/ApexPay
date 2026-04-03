@@ -6,7 +6,7 @@
 2. **Weryfikacja** — po zmianach w API: `npm test`; po zmianach we frontendzie: `npm run typecheck --prefix frontend` (i lint, jeśli potrzeba). Nie zgłaszaj sukcesu bez dowodu z uruchomionych komend (o ile środowisko na to pozwala).
 3. **Git** — na prośbę: commit + push z czytelnym opisem.
 4. **Bezpieczeństwo** — bez sekretów w kodzie i commitach; bez prośby o hasła użytkownika.
-5. **VPS / SSH** — zasady w `.cursor/rules/vps-deploy.mdc`; skrypty `npm run ops:vps-*` gdy działa klucz SSH.
+5. **VPS / SSH** — zasady w `.cursor/rules/vps-deploy.mdc`. **Run Task → ApexPay: VPS — …** (macOS/Linux: bash `*.sh`, Windows: PowerShell `*.ps1`). Terminal: Windows `npm run ops:vps-compose -- -Server user@host`; macOS/Linux `npm run ops:vps-compose:sh -- -s user@host` (oraz `ops:vps-web:sh`, `ops:vps-sync:sh`).
 
 Szczegóły techniczne reguły Cursor: `.cursor/rules/execute-in-cursor.mdc` (`alwaysApply: true` + opis **USE WHEN**).
 

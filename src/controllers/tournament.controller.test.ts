@@ -10,12 +10,17 @@ const h = vi.hoisted(() => {
   const walletFindUnique = vi.fn();
   const walletUpdate = vi.fn();
   const ledgerCreate = vi.fn();
+  const matchCreateMany = vi.fn();
+  const matchFindMany = vi.fn();
+  const tournamentReadFindUnique = vi.fn();
+  const tournamentListFindMany = vi.fn();
   const mockTx = {
     tournament: { findUnique: tournamentFindUnique, update: tournamentUpdate },
     tournamentParticipant: {
       findUnique: tournamentParticipantFindUnique,
       create: tournamentParticipantCreate,
     },
+    match: { createMany: matchCreateMany, findMany: matchFindMany },
     wallet: { findUnique: walletFindUnique, update: walletUpdate },
     transaction: { create: ledgerCreate },
   };
@@ -32,6 +37,10 @@ const h = vi.hoisted(() => {
     walletFindUnique,
     walletUpdate,
     ledgerCreate,
+    matchCreateMany,
+    matchFindMany,
+    tournamentReadFindUnique,
+    tournamentListFindMany,
     mockTx,
     prismaTransaction,
   };
@@ -53,7 +62,11 @@ vi.mock("@prisma/adapter-pg", () => ({
 vi.mock("@prisma/client", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@prisma/client")>();
   class MockPrismaClient {
-    tournament = { create: h.tournamentCreate };
+    tournament = {
+      create: h.tournamentCreate,
+      findUnique: h.tournamentReadFindUnique,
+      findMany: h.tournamentListFindMany,
+    };
     $transaction = h.prismaTransaction;
   }
   return { ...mod, PrismaClient: MockPrismaClient };
@@ -65,6 +78,7 @@ type MockRequest = {
   body: Record<string, unknown>;
   user?: { id: string };
   params?: Record<string, string>;
+  query?: Record<string, string | string[] | undefined>;
 };
 
 function createMockResponse() {
@@ -93,6 +107,8 @@ function resetJoinMocks() {
   h.tournamentUpdate.mockReset();
   h.tournamentParticipantFindUnique.mockReset();
   h.tournamentParticipantCreate.mockReset();
+  h.matchCreateMany.mockReset();
+  h.matchFindMany.mockReset();
   h.walletFindUnique.mockReset();
   h.walletUpdate.mockReset();
   h.ledgerCreate.mockReset();
@@ -103,6 +119,8 @@ function resetJoinMocks() {
 beforeEach(() => {
   vi.clearAllMocks();
   h.tournamentCreate.mockReset();
+  h.tournamentReadFindUnique.mockReset();
+  h.tournamentListFindMany.mockReset();
   resetJoinMocks();
 });
 
@@ -337,6 +355,187 @@ describe("TournamentController.joinTournament", () => {
   });
 });
 
+describe("TournamentController.startTournament", () => {
+  function startableTournament(
+    participantCount: number,
+    opts?: { odd?: boolean; matches?: { id: string }[] },
+  ) {
+    const n = opts?.odd === true ? participantCount + 1 : participantCount;
+    const participants = Array.from({ length: n }, (_, i) => ({
+      userId: `u${i}`,
+      joinedAt: new Date(`2026-01-0${1 + (i % 9)}T12:00:00.000Z`),
+    }));
+    return {
+      id: "t-start",
+      organizerId: "org1",
+      status: "REGISTRATION" as const,
+      participants,
+      matches: opts?.matches ?? [],
+    };
+  }
+
+  it("returns 401 when user id is missing", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.startTournament(
+      { params: { id: "t-start" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.prismaTransaction).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("returns 400 when tournament id is missing", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.startTournament(
+      { params: { id: "" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.prismaTransaction).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 404 when tournament does not exist", async () => {
+    h.tournamentFindUnique.mockResolvedValue(null);
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller.startTournament(
+      { params: { id: "missing" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(404);
+    errSpy.mockRestore();
+  });
+
+  it("returns 403 when caller is not organizer", async () => {
+    h.tournamentFindUnique.mockResolvedValue(startableTournament(2));
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller.startTournament(
+      { params: { id: "t-start" }, user: { id: "other" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(403);
+    errSpy.mockRestore();
+  });
+
+  it("returns 409 when status is not REGISTRATION", async () => {
+    h.tournamentFindUnique.mockResolvedValue({
+      ...startableTournament(2),
+      status: "IN_PROGRESS" as const,
+    });
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller.startTournament(
+      { params: { id: "t-start" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    errSpy.mockRestore();
+  });
+
+  it("returns 409 when tournament already has matches", async () => {
+    h.tournamentFindUnique.mockResolvedValue({
+      ...startableTournament(2),
+      matches: [{ id: "m-old" }],
+    });
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller.startTournament(
+      { params: { id: "t-start" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    errSpy.mockRestore();
+  });
+
+  it("returns 400 when fewer than 2 participants", async () => {
+    h.tournamentFindUnique.mockResolvedValue(startableTournament(1));
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller.startTournament(
+      { params: { id: "t-start" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    errSpy.mockRestore();
+  });
+
+  it("returns 400 when participant count is odd", async () => {
+    h.tournamentFindUnique.mockResolvedValue(startableTournament(2, { odd: true }));
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller.startTournament(
+      { params: { id: "t-start" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    errSpy.mockRestore();
+  });
+
+  it("returns 200, creates N/2 matches and sets IN_PROGRESS", async () => {
+    h.tournamentFindUnique.mockResolvedValue(startableTournament(4));
+    h.matchCreateMany.mockResolvedValue({ count: 2 });
+    h.matchFindMany.mockResolvedValue([
+      { id: "m1", playerAId: "u0", playerBId: "u1" },
+      { id: "m2", playerAId: "u2", playerBId: "u3" },
+    ]);
+
+    const controller = new TournamentController();
+    const res = createMockResponse();
+
+    await controller.startTournament(
+      { params: { id: "t-start" }, user: { id: "org1" } } as MockRequest as never,
+      res as never,
+    );
+
+    expect(h.matchCreateMany).toHaveBeenCalledWith({
+      data: [
+        {
+          tournamentId: "t-start",
+          status: "PENDING",
+          playerAId: "u0",
+          playerBId: "u1",
+          roundNumber: 1,
+          awardsTournamentPrize: false,
+        },
+        {
+          tournamentId: "t-start",
+          status: "PENDING",
+          playerAId: "u2",
+          playerBId: "u3",
+          roundNumber: 1,
+          awardsTournamentPrize: false,
+        },
+      ],
+    });
+
+    expect(h.tournamentUpdate).toHaveBeenCalledWith({
+      where: { id: "t-start" },
+      data: { status: "IN_PROGRESS" },
+    });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload?.status).toBe("success");
+    const data = payload?.data as Record<string, unknown>;
+    expect(data?.tournamentId).toBe("t-start");
+    expect(data?.matchIds).toEqual(["m1", "m2"]);
+    expect(data?.round1Matches).toBe(2);
+    expect(data?.round1).toEqual([
+      { matchId: "m1", playerAId: "u0", playerBId: "u1" },
+      { matchId: "m2", playerAId: "u2", playerBId: "u3" },
+    ]);
+  });
+});
+
 describe("TournamentController.cancelAndRefund", () => {
   function cancellableTournament(organizerId: string) {
     return {
@@ -454,5 +653,309 @@ describe("TournamentController.cancelAndRefund", () => {
       data: { status: "CANCELED" },
     });
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe("TournamentController.listTournaments", () => {
+  it("returns 401 without user", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments({ query: {} } as MockRequest as never, res as never);
+    expect(h.tournamentListFindMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("returns 400 when limit is invalid", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments(
+      { user: { id: "u1" }, query: { limit: "99" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentListFindMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 400 when status is invalid", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments(
+      { user: { id: "u1" }, query: { status: "FOO" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentListFindMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 200 with items", async () => {
+    const ends = new Date("2026-06-01T12:00:00.000Z");
+    h.tournamentListFindMany.mockResolvedValue([
+      {
+        id: "t1",
+        title: "Cup",
+        status: "REGISTRATION",
+        entryFee: 600n,
+        maxPlayers: 8,
+        registrationEndsAt: ends,
+        minLevel: 1,
+        organizerId: "org1",
+        createdAt: ends,
+        _count: { participants: 3 },
+      },
+    ]);
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments(
+      {
+        user: { id: "u1" },
+        query: { limit: "10", status: "REGISTRATION" },
+      } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentListFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: "REGISTRATION" },
+        take: 10,
+      }),
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
+    const data = payload?.data as { items: unknown[] };
+    expect(data.items).toHaveLength(1);
+    expect(data.items[0]).toMatchObject({
+      tournamentId: "t1",
+      entryFeeCents: "600",
+      participantCount: 3,
+    });
+  });
+});
+
+describe("TournamentController.getTournament", () => {
+  it("returns 401 without user", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "t1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentReadFindUnique).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("returns 400 when id missing", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "" }, user: { id: "u1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentReadFindUnique).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 404 when not found", async () => {
+    h.tournamentReadFindUnique.mockResolvedValue(null);
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "x" }, user: { id: "u1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 200 with matches and participants", async () => {
+    const joined = new Date("2026-01-02T12:00:00.000Z");
+    h.tournamentReadFindUnique.mockResolvedValue({
+      id: "t1",
+      title: "Cup",
+      status: "IN_PROGRESS",
+      entryFee: 500n,
+      maxPlayers: 4,
+      minLevel: 1,
+      registrationEndsAt: joined,
+      organizerId: "org1",
+      createdAt: joined,
+      participants: [{ userId: "u0", joinedAt: joined }],
+      matches: [
+        {
+          id: "m1",
+          roundNumber: 1,
+          status: "PENDING",
+          playerAId: "u0",
+          playerBId: "u1",
+          winnerId: null,
+          awardsTournamentPrize: false,
+          createdAt: joined,
+        },
+      ],
+    });
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "t1" }, user: { id: "u1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    const data = (res.json.mock.calls[0]?.[0] as Record<string, unknown>)
+      ?.data as Record<string, unknown>;
+    expect(data?.matches).toHaveLength(1);
+    expect(data?.participants).toHaveLength(1);
+    expect((data?.matches as unknown[])[0]).toMatchObject({
+      matchId: "m1",
+      roundNumber: 1,
+    });
+  });
+});
+
+describe("TournamentController.listTournaments", () => {
+  it("returns 401 without user", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments({ query: {} } as MockRequest as never, res as never);
+    expect(h.tournamentListFindMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("returns 400 when limit is invalid", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments(
+      { user: { id: "u1" }, query: { limit: "99" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentListFindMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 400 when status is invalid", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments(
+      { user: { id: "u1" }, query: { status: "FOO" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentListFindMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 200 with items", async () => {
+    const ends = new Date("2026-06-01T12:00:00.000Z");
+    h.tournamentListFindMany.mockResolvedValue([
+      {
+        id: "t1",
+        title: "Cup",
+        status: "REGISTRATION",
+        entryFee: 600n,
+        maxPlayers: 8,
+        registrationEndsAt: ends,
+        minLevel: 1,
+        organizerId: "org1",
+        createdAt: ends,
+        _count: { participants: 3 },
+      },
+    ]);
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.listTournaments(
+      {
+        user: { id: "u1" },
+        query: { limit: "10", status: "REGISTRATION" },
+      } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentListFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: "REGISTRATION" },
+        take: 10,
+      }),
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
+    const data = payload?.data as { items: unknown[] };
+    expect(data.items).toHaveLength(1);
+    expect(data.items[0]).toMatchObject({
+      tournamentId: "t1",
+      entryFeeCents: "600",
+      participantCount: 3,
+    });
+  });
+});
+
+describe("TournamentController.getTournament", () => {
+  it("returns 401 without user", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "t1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentReadFindUnique).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("returns 400 when id missing", async () => {
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "" }, user: { id: "u1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(h.tournamentReadFindUnique).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 404 when not found", async () => {
+    h.tournamentReadFindUnique.mockResolvedValue(null);
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "x" }, user: { id: "u1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 200 with matches and participants", async () => {
+    const joined = new Date("2026-01-02T12:00:00.000Z");
+    h.tournamentReadFindUnique.mockResolvedValue({
+      id: "t1",
+      title: "Cup",
+      status: "IN_PROGRESS",
+      entryFee: 500n,
+      maxPlayers: 4,
+      minLevel: 1,
+      registrationEndsAt: joined,
+      organizerId: "org1",
+      createdAt: joined,
+      participants: [{ userId: "u0", joinedAt: joined }],
+      matches: [
+        {
+          id: "m1",
+          roundNumber: 1,
+          status: "PENDING",
+          playerAId: "u0",
+          playerBId: "u1",
+          winnerId: null,
+          awardsTournamentPrize: false,
+          createdAt: joined,
+        },
+      ],
+    });
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    await controller.getTournament(
+      { params: { id: "t1" }, user: { id: "u1" } } as MockRequest as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    const data = (res.json.mock.calls[0]?.[0] as Record<string, unknown>)
+      ?.data as Record<string, unknown>;
+    expect(data?.matches).toHaveLength(1);
+    expect(data?.participants).toHaveLength(1);
+    expect((data?.matches as unknown[])[0]).toMatchObject({
+      matchId: "m1",
+      roundNumber: 1,
+    });
   });
 });

@@ -6,10 +6,12 @@ Ten dokument mapuje wdrozenie infrastruktury na 3 etapy, zgodnie z architektura 
 
 1. Build i publikacja obrazow:
    - API: `Dockerfile`
-   - WEB: `Dockerfile.web` (w CI ustaw **Repository variable** `VITE_API_URL` na pelny origin API, np. `https://api.apexpay.pl`)
+   - WEB: `Dockerfile.web` — **`VITE_API_URL`** (zmienna repozytorium GitHub, build-arg w deploy):
+     - **Puste** — front woła względne `/api/...` na tym samym hoście co strona; wymaga działającego proxy w obrazie web (`deploy/nginx/web.conf`: `location ^~ /api/` → backend). To domyślny układ z `docker-compose.prod.yml` (Traefik → `web` → wewnętrznie `api`).
+     - **`https://twoje-api`** (np. `https://api.apexpay.pl`) — bezpośrednie wywołania API z przeglądarki; na serwisie API ustaw **`CORS_ORIGIN`** na origin frontu (np. `https://apexpay.pl`).
 2. Uruchamianie przez `docker-compose.prod.yml`:
    - `traefik` (TLS/LE)
-   - `api-migrator` + `api`
+   - `api-migrator` + `api` (dwa routery HTTP: `API_DOMAIN` oraz **`APP_DOMAIN` + `PathPrefix(/api)`** — logowanie z frontu bez HTML zamiast JSON)
    - `web` (Nginx, statyczny frontend)
 3. Komenda:
 

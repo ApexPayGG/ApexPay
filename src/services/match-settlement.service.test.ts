@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
 import { MatchSettlementService } from "./match-settlement.service.js";
+import type { TournamentBracketService } from "./tournament-bracket.service.js";
+
+const bracketHoist = vi.hoisted(() => ({
+  advanceAfterTerminalMatch: vi.fn().mockResolvedValue({
+    tournamentCompleted: false,
+    createdNextRoundMatches: 0,
+  }),
+}));
 
 function createTxMock(overrides: {
   matchRow?: {
@@ -53,13 +61,19 @@ describe("MatchSettlementService", () => {
   let txMocks: ReturnType<typeof createTxMock>;
 
   beforeEach(() => {
+    bracketHoist.advanceAfterTerminalMatch.mockClear();
     txMocks = createTxMock();
     const prismaTransaction = vi.fn(
       async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
         fn(txMocks.tx),
     );
     prisma = { $transaction: prismaTransaction } as unknown as PrismaClient;
-    settlement = new MatchSettlementService(prisma);
+    settlement = new MatchSettlementService(
+      prisma,
+      {
+        advanceAfterTerminalMatch: bracketHoist.advanceAfterTerminalMatch,
+      } as unknown as TournamentBracketService,
+    );
   });
 
   it("throws MATCH_ALREADY_SETTLED when row is SETTLED", async () => {
@@ -118,6 +132,7 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      awardsTournamentPrize: true,
       tournament: {
         entryFee: 100n,
         participants: [{ userId: "a" }, { userId: "b" }],
@@ -133,6 +148,10 @@ describe("MatchSettlementService", () => {
       finalWinnerId: "w1",
     });
 
+    expect(bracketHoist.advanceAfterTerminalMatch).toHaveBeenCalledWith(
+      "t1",
+      txMocks.tx,
+    );
     expect(txMocks.queryRaw).toHaveBeenCalled();
     expect(txMocks.walletUpdate).toHaveBeenCalled();
     expect(txMocks.userBalanceLedgerCreate).toHaveBeenCalled();
@@ -147,6 +166,41 @@ describe("MatchSettlementService", () => {
     });
     expect(result.matchId).toBe("m1");
     expect(result.status).toBe("SETTLED");
+    expect(result.prizePaid).toBe(true);
+  });
+
+  it("skips wallet payout when awardsTournamentPrize is false but still settles and advances bracket", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      awardsTournamentPrize: false,
+      tournament: {
+        entryFee: 100n,
+        participants: [{ userId: "a" }, { userId: "b" }],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    const result = await settlement.settleDisputedMatch({
+      matchId: "m1",
+      finalWinnerId: "w1",
+    });
+
+    expect(txMocks.walletFindUnique).not.toHaveBeenCalled();
+    expect(txMocks.walletUpdate).not.toHaveBeenCalled();
+    expect(txMocks.outboxCreate).not.toHaveBeenCalled();
+    expect(result.prizePaid).toBe(false);
+    expect(bracketHoist.advanceAfterTerminalMatch).toHaveBeenCalled();
   });
 
   it("retries on P2034 deadlock code", async () => {
@@ -166,6 +220,7 @@ describe("MatchSettlementService", () => {
           id: "m1",
           tournamentId: "t1",
           status: "DISPUTED",
+          awardsTournamentPrize: true,
           tournament: {
             entryFee: 100n,
             participants: [{ userId: "a" }, { userId: "b" }],
@@ -179,7 +234,12 @@ describe("MatchSettlementService", () => {
       },
     );
     prisma = { $transaction: prismaTransaction } as unknown as PrismaClient;
-    settlement = new MatchSettlementService(prisma);
+    settlement = new MatchSettlementService(
+      prisma,
+      {
+        advanceAfterTerminalMatch: bracketHoist.advanceAfterTerminalMatch,
+      } as unknown as TournamentBracketService,
+    );
 
     await settlement.settleDisputedMatch({
       matchId: "m1",

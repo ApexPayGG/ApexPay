@@ -69,6 +69,18 @@ Authorization: Bearer {{token}}
   "registrationEndsInHours": 48
 }
 
+### 4b. Lista turniejów (opcjonalnie ?limit=20&status=IN_PROGRESS)
+GET {{baseUrl}}/tournaments
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### 4c. Szczegół turnieju + drabinka (podmień {{tournamentId}})
+# @tournamentId ustaw w sekcji 5 lub tutaj:
+# @tournamentId = ...
+GET {{baseUrl}}/tournaments/{{tournamentId}}
+Authorization: Bearer {{token}}
+Accept: application/json
+
 ### 5. Dołącz do turnieju (Gracz)
 # Podmień {{tournamentId}} na ID z odpowiedzi sekcji 4 (pole data.tournamentId).
 @tournamentId = TUTAJ_WKLEJ_ID_TURNIEJU

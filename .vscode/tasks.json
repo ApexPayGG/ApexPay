@@ -1,0 +1,155 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "apexpaySshServer",
+      "type": "promptString",
+      "description": "SSH do VPS: użytkownik@host (np. ubuntu@203.0.113.10). Musi działać: ssh user@host z tej maszyny.",
+      "default": ""
+    }
+  ],
+  "tasks": [
+    {
+      "label": "ApexPay: VPS — compose + up -d (managed)",
+      "detail": "macOS/Linux: bash + scp/ssh. Windows: PowerShell. Bez --profile selfhosted.",
+      "type": "shell",
+      "command": "bash \"${workspaceFolder}/scripts/vps-apply-prod-compose.sh\" -s \"${input:apexpaySshServer}\"",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/vps-apply-prod-compose.ps1\" -Server \"${input:apexpaySshServer}\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      }
+    },
+    {
+      "label": "ApexPay: VPS — compose + up -d (selfhosted)",
+      "detail": "Jak wyżej + profil selfhosted (Postgres/Redis w compose).",
+      "type": "shell",
+      "command": "bash \"${workspaceFolder}/scripts/vps-apply-prod-compose.sh\" -s \"${input:apexpaySshServer}\"",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/vps-apply-prod-compose.ps1\" -Server \"${input:apexpaySshServer}\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "APEXPAY_COMPOSE_PROFILE_SELFHOSTED": "1"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      }
+    },
+    {
+      "label": "ApexPay: VPS — recreate web (managed)",
+      "detail": "Na VPS: pull + force-recreate web (bash na macOS/Linux, PowerShell na Windows).",
+      "type": "shell",
+      "command": "bash \"${workspaceFolder}/scripts/vps-remote-recreate-web.sh\" -s \"${input:apexpaySshServer}\"",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/vps-remote-recreate-web.ps1\" -Server \"${input:apexpaySshServer}\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ApexPay: VPS — recreate web (selfhosted)",
+      "type": "shell",
+      "command": "bash \"${workspaceFolder}/scripts/vps-remote-recreate-web.sh\" -s \"${input:apexpaySshServer}\"",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/vps-remote-recreate-web.ps1\" -Server \"${input:apexpaySshServer}\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "APEXPAY_COMPOSE_PROFILE_SELFHOSTED": "1"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ApexPay: VPS — tylko scp compose (bez up)",
+      "detail": "Kopiuje docker-compose.prod.yml na /opt/apexpay-api/ (bash / PowerShell).",
+      "type": "shell",
+      "command": "bash \"${workspaceFolder}/scripts/sync-prod-compose-to-server.sh\" -s \"${input:apexpaySshServer}\"",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/sync-prod-compose-to-server.ps1\" -Server \"${input:apexpaySshServer}\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ApexPay: Dev — API + Web",
+      "type": "npm",
+      "script": "dev",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "ApexPay: Test (vitest)",
+      "type": "npm",
+      "script": "test",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ApexPay: Typecheck (API + frontend)",
+      "type": "npm",
+      "script": "typecheck",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ApexPay: Lint (frontend)",
+      "type": "npm",
+      "script": "lint:web",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "ApexPay: Build (API + web)",
+      "type": "npm",
+      "script": "build:all",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}

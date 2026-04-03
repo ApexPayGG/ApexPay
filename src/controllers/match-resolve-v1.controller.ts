@@ -47,10 +47,12 @@ export class MatchResolveV1Controller {
         finalWinnerId: winnerId,
       });
 
-      this.wsService.notifyWallet(winnerId, "PAYOUT_RECEIVED", {
-        message: "Środki rozliczone (v1).",
-        matchId,
-      });
+      if (result.prizePaid) {
+        this.wsService.notifyWallet(winnerId, "PAYOUT_RECEIVED", {
+          message: "Środki rozliczone (v1).",
+          matchId,
+        });
+      }
 
       res.status(200).json({
         status: "success",

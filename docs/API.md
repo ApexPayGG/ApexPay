@@ -54,12 +54,19 @@ Base URL produkcji: `https://api.apexpay.pl`. Wiele tras jest zdublowanych pod *
 
 | Metoda | Ścieżka | Auth |
 |--------|---------|------|
+| GET | `/api/tournaments` | tak | Query: `limit` (1–50, domyślnie 20), opcjonalnie `status` (`REGISTRATION` / `IN_PROGRESS` / `COMPLETED` / `CANCELED`). |
+| GET | `/api/tournaments/:id` | tak | Szczegół + uczestnicy (`userId`, `joinedAt`) + mecze (drabinka: `roundNumber`, `status`, gracze, `winnerId`, `awardsTournamentPrize`). |
 | POST | `/api/tournaments` | tak |
 | POST | `/api/tournaments/:id/join` | tak |
+| POST | `/api/tournaments/:id/start` | tak (organizator) |
 | POST | `/api/tournaments/:id/cancel` | tak |
 | POST | `/api/matches/:id/report` | tak |
 | POST | `/api/matches/:id/resolve` | tak |
 | POST | `/api/v1/matches/:id/resolve` | tak (+ HMAC, rate limit, idempotencja) |
+
+**Start turnieju** (`POST .../start`): odpowiedź zawiera `data.round1` — tablica `{ matchId, playerAId, playerBId }` (pary wg kolejności zapisów). Przy meczach bez przypisanych graczy (dane sprzed migracji) walidacja raportu nie wymusza listy zawodników.
+
+**Drabinka (single elimination):** mecze mają `roundNumber`; wypłata puli turnieju (`PRIZE_PAYOUT`) następuje tylko przy meczu z `awardsTournamentPrize` (finał lub turniej 1×1). Po zamknięciu wszystkich meczów rundy (konsensus / `RESOLVED`, albo rozliczenie v1 `SETTLED`) silnik tworzy kolejną rundę albo ustawia turniej na `COMPLETED`.
 
 ## Webhooki
 

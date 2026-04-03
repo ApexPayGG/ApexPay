@@ -133,6 +133,30 @@ scp docker-compose.prod.yml USER@HOST:/opt/apexpay-api/
 scp .env.prod USER@HOST:/opt/apexpay-api/
 ```
 
+**W Cursorze:** *Terminal* → **Run Task…** → wybierz **ApexPay: VPS — compose + up -d (managed)** lub **(selfhosted)** — w polu wpisz `USER@HOST`. Na **macOS / Linux** to samo zadanie uruchamia **bash** (`scripts/*.sh`); na **Windows** — **PowerShell** (`.ps1`).
+
+**Z macOS / Linux (bash, OpenSSH):**
+
+```bash
+cd /ścieżka/do/SkillGaming
+./scripts/vps-apply-prod-compose.sh -s USER@HOST
+# lub: APEXPAY_SSH=USER@HOST ./scripts/vps-apply-prod-compose.sh
+# lub: npm run ops:vps-compose:sh -- -s USER@HOST
+```
+
+Stack **selfhosted:** `export APEXPAY_COMPOSE_PROFILE_SELFHOSTED=1` przed powyższym (albo zadanie **(selfhosted)** w Cursorze).
+
+**Z Windows (PowerShell):** po skonfigurowaniu SSH (`ssh USER@HOST` działa z agenta / klucza):
+
+```powershell
+cd C:\ścieżka\do\SkillGaming
+.\scripts\vps-apply-prod-compose.ps1 -Server USER@HOST
+# lub: npm run ops:vps-compose -- -Server USER@HOST
+# lub: $env:APEXPAY_SSH = "USER@HOST"; .\scripts\vps-apply-prod-compose.ps1
+```
+
+Stack **selfhosted** (Postgres/Redis w compose): w PowerShell `$env:APEXPAY_COMPOSE_PROFILE_SELFHOSTED = "1"` przed skryptem (albo zadanie **(selfhosted)** — zmienna jest ustawiana w tasku).
+
 ---
 
 ## 7. Zmienne w `.env.prod` (produkcja)
@@ -157,6 +181,8 @@ muszą być m.in. (nazwy jak w `docker-compose.prod.yml`):
   (workflow deploy ustawia to samo w sesji shell — **musisz** mieć spójność z tym, co buduje CI; najprościej ustawić w `.env.prod` ten sam URL co w GHCR).
 - **`APEXPAY_WEB_IMAGE`** — pełny adres obrazu frontendu z GHCR, np.  
   `ghcr.io/owner/repo/apexpay-web:latest`.
+
+**Logowanie w UI: „Nieprawidłowa odpowiedź serwera (nie JSON)”** — HTML zamiast JSON z `/api/...`. Stack z `docker-compose.prod.yml` kieruje **`https://APP_DOMAIN/api`** do kontenera **api** (router Traefik `api-inapp`, priorytet wyższy niż `web`). Po zmianie compose: `docker compose ... up -d` (przeładowanie Traefik). Poza tym: nginx w obrazie web (`deploy/nginx/web.conf`), ewentualnie **`VITE_API_URL`** na osobny host API + **`CORS_ORIGIN`**.
 
 Dodatkowo dla API (sekcja `environment` serwisu `api` — jeśli rozszerzysz compose o `env_file` dla `api`, albo przez `environment` z interpolacji):
 

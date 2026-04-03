@@ -76,6 +76,8 @@ async function main(): Promise<void> {
           tournamentId: tournament.id,
           status: "DISPUTED",
           winnerId: null,
+          playerAId: playerA.id,
+          playerBId: playerB.id,
         },
       });
 

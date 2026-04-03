@@ -11,5 +11,7 @@ alwaysApply: true
 - **`docker compose pull` obrazów z `ghcr.io`** uruchamiaj **na VPS** (albo `npm run ops:vps-web`), nie w lokalnym Dockerze na Windows — inaczej `denied` i brak logowania do GHCR. Katalog `/opt/apexpay-api` istnieje tylko po SSH; lokalnie używaj `C:\...\Workspace_SkillGaming`.
 - Skrypty **bash (`.sh`)** przed `scp` muszą mieć **LF** — w repo pomaga `scripts/vps-ssh-helpers.ps1` (normalizacja przy wgrywaniu `refresh-traefik.sh`).
 - **Wersja obrazu Traefika** wynika z **`docker-compose.prod.yml` na serwerze.** Jeśli `docker compose pull traefik` pobiera stare `v3.0`, plik na VPS jest niezsynchronizowany z repozytorium — trzeba **nadpisać** go (np. `scp` z maszyny dev albo jednorazowo `git clone` w innym katalogu i skopiować plik).
-- **Z maszyny deweloperskiej (Windows, repo lokalne)** z działającym `ssh`/`scp`: `npm run ops:vps-traefik` — wgrywa `docker-compose.prod.yml` i odpala przeładowanie Traefika (patrz `scripts/vps-update-traefik-compose.ps1`).
-- **Tylko na VPS (bez npm):** `bash /opt/apexpay-api/refresh-traefik.sh` po jednorazowym skopiowaniu tego skryptu obok compose (robi to ten sam skrypt PowerShell).
+- **W Cursorze / VS Code:** *Terminal → Run Task…* → **ApexPay: VPS — …** — `user@host` w polu wejścia. **macOS/Linux:** domyślnie `bash` + `scripts/*.sh`; **Windows:** `PowerShell` + `.ps1` (nadpisanie w `tasks.json`).
+- **Z macOS / Linux:** `./scripts/vps-apply-prod-compose.sh -s USER@HOST` lub `npm run ops:vps-compose:sh -- -s USER@HOST` (`APEXPAY_SSH`, `APEXPAY_REMOTE_DIR` opcjonalnie).
+- **Z Windows (PowerShell):** `.\scripts\vps-apply-prod-compose.ps1 -Server USER@HOST` lub `npm run ops:vps-compose -- -Server USER@HOST` (lub `$env:APEXPAY_SSH`). Alias: `vps-update-traefik-compose.ps1` → apply.
+- **Tylko na VPS:** `bash /opt/apexpay-api/refresh-traefik.sh` (po `scp`; skrypt używa wyłącznie `docker-compose.prod.yml` i opcjonalnie `.env.prod`, zgodnie z CI).

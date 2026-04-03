@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import type { ClearingService } from "../services/clearing.service.js";
+import type { TournamentBracketService } from "../services/tournament-bracket.service.js";
 import type { WebSocketService } from "../services/websocket.service.js";
 import { MatchController } from "./match.controller.js";
 
@@ -21,11 +22,23 @@ function createHarness() {
   const prisma = {
     $transaction: prismaTransaction,
   } as unknown as PrismaClient;
-  const processPayout = vi.fn().mockResolvedValue(undefined);
+  const processPayout = vi.fn().mockResolvedValue(true);
   const clearingService = { processPayout } as unknown as ClearingService;
+  const advanceAfterTerminalMatch = vi.fn().mockResolvedValue({
+    tournamentCompleted: false,
+    createdNextRoundMatches: 0,
+  });
+  const bracketService = {
+    advanceAfterTerminalMatch,
+  } as unknown as TournamentBracketService;
   const notifyWallet = vi.fn();
   const wsService = { notifyWallet } as unknown as WebSocketService;
-  const controller = new MatchController(prisma, clearingService, wsService);
+  const controller = new MatchController(
+    prisma,
+    clearingService,
+    wsService,
+    bracketService,
+  );
   return {
     controller,
     matchFindUnique,
@@ -35,6 +48,7 @@ function createHarness() {
     mockTx,
     prismaTransaction,
     processPayout,
+    advanceAfterTerminalMatch,
     notifyWallet,
   };
 }
@@ -127,6 +141,54 @@ describe("MatchController.reportResult", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 403 when reporter is not an assigned player", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "PENDING",
+      reports: [],
+      playerAId: "pa",
+      playerBId: "pb",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.reportResult(
+      {
+        params: { id: "m1" },
+        body: { claimedWinnerId: "pa" },
+        user: { id: "outsider" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    errSpy.mockRestore();
+  });
+
+  it("returns 400 when claimed winner is not an assigned player", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "PENDING",
+      reports: [],
+      playerAId: "pa",
+      playerBId: "pb",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.reportResult(
+      {
+        params: { id: "m1" },
+        body: { claimedWinnerId: "outsider" },
+        user: { id: "pa" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    errSpy.mockRestore();
+  });
+
   it("returns 200 PENDING_OPPONENT after first report", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",
@@ -151,11 +213,13 @@ describe("MatchController.reportResult", () => {
     expect(body?.matchState).toBe("PENDING_OPPONENT");
     expect(h.processPayout).not.toHaveBeenCalled();
     expect(h.notifyWallet).not.toHaveBeenCalled();
+    expect(h.advanceAfterTerminalMatch).not.toHaveBeenCalled();
   });
 
   it("returns 200 RESOLVED and runs clearing in same tx", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",
+      tournamentId: "t1",
       status: "PENDING",
       reports: [],
     });
@@ -185,6 +249,7 @@ describe("MatchController.reportResult", () => {
       "winner-1",
       h.mockTx,
     );
+    expect(h.advanceAfterTerminalMatch).toHaveBeenCalledWith("t1", h.mockTx);
     expect(h.notifyWallet).toHaveBeenCalledWith(
       "winner-1",
       "PAYOUT_RECEIVED",
@@ -196,6 +261,33 @@ describe("MatchController.reportResult", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(body?.matchState).toBe("RESOLVED");
+  });
+
+  it("does not send payout WS when processPayout returns false", async () => {
+    h.processPayout.mockResolvedValueOnce(false);
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "PENDING",
+      reports: [],
+    });
+    h.matchReportFindMany.mockResolvedValue([
+      { claimedWinnerId: "winner-1" },
+      { claimedWinnerId: "winner-1" },
+    ]);
+    const res = mockRes();
+
+    await h.controller.reportResult(
+      {
+        params: { id: "m1" },
+        body: { claimedWinnerId: "winner-1" },
+        user: { id: "r2" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(h.advanceAfterTerminalMatch).toHaveBeenCalledWith("t1", h.mockTx);
+    expect(h.notifyWallet).not.toHaveBeenCalled();
   });
 
   it("returns 200 DISPUTED when reports disagree", async () => {
@@ -226,6 +318,7 @@ describe("MatchController.reportResult", () => {
     });
     expect(h.processPayout).not.toHaveBeenCalled();
     expect(h.notifyWallet).not.toHaveBeenCalled();
+    expect(h.advanceAfterTerminalMatch).not.toHaveBeenCalled();
     const body = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(body?.matchState).toBe("DISPUTED");
   });
@@ -315,9 +408,34 @@ describe("MatchController.resolveDispute", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 400 when final winner is not an assigned player", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "DISPUTED",
+      winnerId: null,
+      playerAId: "pa",
+      playerBId: "pb",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "outsider" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    errSpy.mockRestore();
+  });
+
   it("returns 200 and runs payout in same tx", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",
+      tournamentId: "t1",
       status: "DISPUTED",
       winnerId: null,
     });
@@ -342,6 +460,7 @@ describe("MatchController.resolveDispute", () => {
       "winner-1",
       h.mockTx,
     );
+    expect(h.advanceAfterTerminalMatch).toHaveBeenCalledWith("t1", h.mockTx);
     expect(h.notifyWallet).toHaveBeenCalledWith(
       "winner-1",
       "PAYOUT_RECEIVED",
@@ -350,6 +469,31 @@ describe("MatchController.resolveDispute", () => {
         matchId: "m1",
       }),
     );
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it("does not notify wallet when processPayout skips prize round", async () => {
+    h.processPayout.mockResolvedValueOnce(false);
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      winnerId: null,
+    });
+    h.matchUpdate.mockResolvedValue({});
+    const res = mockRes();
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "winner-1" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(h.advanceAfterTerminalMatch).toHaveBeenCalledWith("t1", h.mockTx);
+    expect(h.notifyWallet).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
   });
 });

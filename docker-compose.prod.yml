@@ -133,12 +133,21 @@ services:
       - traefik.enable=true
       - traefik.docker.network=apexpay_prod_network
       - "traefik.http.routers.api.rule=Host(`${API_DOMAIN:?set API_DOMAIN}`)"
+      - traefik.http.routers.api.service=api
       - traefik.http.routers.api.entrypoints=websecure
       - traefik.http.routers.api.tls.certresolver=letsencrypt
       - traefik.http.services.api.loadbalancer.server.port=3000
       - traefik.http.middlewares.api-ratelimit.ratelimit.average=${TRAEFIK_API_RATE_AVERAGE:-150}
       - traefik.http.middlewares.api-ratelimit.ratelimit.burst=${TRAEFIK_API_RATE_BURST:-300}
       - traefik.http.routers.api.middlewares=api-ratelimit
+      # Ten sam host co front: /api/* → API (JSON), nie index.html ze statycznego webu.
+      # Jawny service=api — bez tego router api-inapp nie łączy się z loadbalancerem (Traefik szukałby usługi api-inapp), POST /api/... trafiałby w nginx SPA → 405.
+      - "traefik.http.routers.api-inapp.rule=Host(`${APP_DOMAIN:?set APP_DOMAIN}`) && PathPrefix(`/api`)"
+      - traefik.http.routers.api-inapp.service=api
+      - traefik.http.routers.api-inapp.entrypoints=websecure
+      - traefik.http.routers.api-inapp.tls.certresolver=letsencrypt
+      - traefik.http.routers.api-inapp.middlewares=api-ratelimit
+      - traefik.http.routers.api-inapp.priority=100
     depends_on:
       api-migrator:
         condition: service_completed_successfully
@@ -168,6 +177,7 @@ services:
       - "traefik.http.routers.web.rule=Host(`${APP_DOMAIN:?set APP_DOMAIN}`)"
       - traefik.http.routers.web.entrypoints=websecure
       - traefik.http.routers.web.tls.certresolver=letsencrypt
+      - traefik.http.routers.web.priority=1
       - traefik.http.services.web.loadbalancer.server.port=8080
       - traefik.http.middlewares.web-security.headers.contentTypeNosniff=true
       - traefik.http.middlewares.web-security.headers.browserXssFilter=true

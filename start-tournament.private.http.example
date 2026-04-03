@@ -1,0 +1,11 @@
+# Start turnieju (tylko organizator z JWT). Wymaga: status REGISTRATION, ≥2 graczy, parzysta liczba uczestników, brak istniejących meczów.
+# Skopiuj: Copy-Item start-tournament.private.http.example start-tournament.private.http
+#
+# W odpowiedzi: data.matchIds, data.round1 (matchId + playerAId + playerBId).
+@base = https://apexpay.pl
+@token =
+@tournamentId =
+
+POST {{base}}/api/tournaments/{{tournamentId}}/start
+Authorization: Bearer {{token}}
+Accept: application/json

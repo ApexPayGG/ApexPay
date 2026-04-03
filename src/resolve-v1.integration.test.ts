@@ -103,6 +103,7 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
         matchId: "match-race-1",
         status: "SETTLED" as const,
         winnerId: "winner-1",
+        prizePaid: true,
       };
     });
   });

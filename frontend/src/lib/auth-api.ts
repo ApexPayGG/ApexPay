@@ -31,6 +31,9 @@ function mapServerErrorMessage(status: number, raw: string): string {
   if (status === 401) {
     return "Nieprawidłowy e-mail lub hasło.";
   }
+  if (status === 405) {
+    return "Serwer odrzucił metodę (405). Zwykle POST /api/… trafia w front zamiast w API — sprawdź Traefik (router api-inapp → service=api) i wdrożenie docker-compose.prod.yml.";
+  }
   if (status === 400) {
     if (raw.includes("Email and password are required")) {
       return "E-mail i hasło są wymagane.";
@@ -61,16 +64,21 @@ export async function loginWithPassword(
   });
 
   const text = await res.text();
+  const contentType = res.headers.get("content-type") ?? "";
   let data: unknown = {};
   if (text.length > 0) {
     try {
       data = JSON.parse(text) as unknown;
     } catch {
       const looksLikeHtml =
-        text.trimStart().startsWith("<") || /<\s*!doctype\s+html/i.test(text);
+        text.trimStart().startsWith("<") ||
+        /<\s*!doctype\s+html/i.test(text) ||
+        contentType.includes("text/html");
       const hint = looksLikeHtml
-        ? " Frontend prawdopodobnie woła API pod tym samym hostem co strona (nginx zwraca HTML). Ustaw przy buildzie VITE_API_URL na pełny origin API, np. https://api.apexpay.pl."
-        : "";
+        ? res.status === 405
+          ? " HTTP 405 + HTML — często Traefik kieruje POST /api/… na kontener web zamiast api: dodaj etykietę traefik.http.routers.api-inapp.service=api i ponów compose up (patrz docker-compose.prod.yml)."
+          : " Serwer zwrócił stronę HTML zamiast JSON — zwykle brak proxy `/api/` do backendu (patrz deploy/nginx/web.conf) albo zły adres API przy buildzie frontu. Opcje: (1) zostaw `VITE_API_URL` puste i zapewnij reverse proxy `https://twoja-domena/api/` → Node; (2) ustaw przy buildzie `VITE_API_URL=https://twoje-api` (np. zmienna repozytorium GitHub `VITE_API_URL`) i `CORS_ORIGIN` na API."
+        : ` (HTTP ${res.status}, Content-Type: ${contentType || "brak"})`;
       throw new AuthApiError(
         `Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`,
         res.status,
@@ -117,6 +125,9 @@ function mapRegisterError(status: number, raw: string): string {
   if (status === 409) {
     return "Ten adres e-mail jest już zarejestrowany.";
   }
+  if (status === 405) {
+    return "Serwer odrzucił metodę (405) — routing /api/… do API (Traefik service=api dla api-inapp).";
+  }
   if (status === 400) {
     if (raw.length > 0) return raw;
     return "Niepoprawne dane rejestracji.";
@@ -148,16 +159,21 @@ export async function registerWithPassword(
   });
 
   const text = await res.text();
+  const contentTypeRegister = res.headers.get("content-type") ?? "";
   let data: unknown = {};
   if (text.length > 0) {
     try {
       data = JSON.parse(text) as unknown;
     } catch {
       const looksLikeHtml =
-        text.trimStart().startsWith("<") || /<\s*!doctype\s+html/i.test(text);
+        text.trimStart().startsWith("<") ||
+        /<\s*!doctype\s+html/i.test(text) ||
+        contentTypeRegister.includes("text/html");
       const hint = looksLikeHtml
-        ? " Odpowiedź nie jest JSON (sprawdź proxy /api i backend)."
-        : "";
+        ? res.status === 405
+          ? " HTTP 405 + HTML — patrz Traefik api-inapp.service=api i docker-compose.prod.yml."
+          : " Serwer zwrócił HTML zamiast JSON — sprawdź proxy `/api/` do backendu lub `VITE_API_URL` przy buildzie obrazu web."
+        : ` (HTTP ${res.status}, Content-Type: ${contentTypeRegister || "brak"})`;
       throw new AuthApiError(
         `Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`,
         res.status,

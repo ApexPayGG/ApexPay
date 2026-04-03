@@ -6,6 +6,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
 COPY frontend ./
+# Puste: klient woła /api na tym samym origin (Traefik PathPrefix /api → api; patrz docker-compose.prod.yml).
 ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build

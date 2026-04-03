@@ -26,6 +26,8 @@ model User {
   participations       TournamentParticipant[]
   reportedMatches      MatchReport[]           @relation("ReportedMatches")
   balanceLedgerEntries UserBalanceLedger[]
+  matchesAsPlayerA     Match[]                 @relation("MatchPlayerA")
+  matchesAsPlayerB     Match[]                 @relation("MatchPlayerB")
 }
 
 // --- FINANSE: Portfele i Księga Główna (Ledger) ---
@@ -99,14 +101,24 @@ model TournamentParticipant {
 }
 
 model Match {
-  id           String      @id @default(cuid())
-  tournamentId String
-  tournament   Tournament  @relation(fields: [tournamentId], references: [id])
-  status       MatchStatus @default(PENDING)
-  winnerId     String?
-  createdAt    DateTime    @default(now())
+  id                      String      @id @default(cuid())
+  tournamentId            String
+  tournament              Tournament  @relation(fields: [tournamentId], references: [id])
+  status                  MatchStatus @default(PENDING)
+  winnerId                String?
+  playerAId               String?
+  playerBId               String?
+  playerA                 User?       @relation("MatchPlayerA", fields: [playerAId], references: [id])
+  playerB                 User?       @relation("MatchPlayerB", fields: [playerBId], references: [id])
+  /// Runda drabinki (1 = pierwsza po starcie turnieju).
+  roundNumber             Int         @default(1)
+  /// Jeśli true, rozliczenie meczu wypłaca pulę turnieju (tylko finał w modelu single-elimination).
+  awardsTournamentPrize   Boolean     @default(true)
+  createdAt               DateTime    @default(now())
 
   reports      MatchReport[]
+
+  @@index([tournamentId, roundNumber])
 }
 
 enum MatchStatus {

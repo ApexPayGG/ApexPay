@@ -56,6 +56,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.image }}
 
+      # VITE_API_URL: puste = względne /api na hoście frontu (Traefik + api-inapp w compose, albo nginx w obrazie web).
       - name: Build and push web image
         uses: docker/build-push-action@v6
         with:
@@ -71,6 +72,20 @@ jobs:
     needs: build-push
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (ten sam commit co build — compose zgodny z obrazami)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Wgraj docker-compose.prod.yml na VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/apexpay-api/
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@master
         env:
