@@ -174,7 +174,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=apexpay_prod_network
-      - "traefik.http.routers.web.rule=Host(`${APP_DOMAIN:?set APP_DOMAIN}`)"
+      # Bez !PathPrefix(/api) router web pasuje do całego hosta — przy złym priorytecie lub konflikcie POST /api/… ląduje w nginx SPA (HTML / 405 zamiast JSON).
+      - "traefik.http.routers.web.rule=Host(`${APP_DOMAIN:?set APP_DOMAIN}`) && !PathPrefix(`/api`)"
       - traefik.http.routers.web.entrypoints=websecure
       - traefik.http.routers.web.tls.certresolver=letsencrypt
       - traefik.http.routers.web.priority=1
