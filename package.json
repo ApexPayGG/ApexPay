@@ -29,6 +29,7 @@
     "ci:generate-jwt": "tsx src/scripts/generate-ci-jwt.ts",
     "db:check-bloat": "tsx src/scripts/check-db-bloat.ts",
     "ops:check-env": "tsx scripts/check-apexpay-env.ts",
+    "ops:vps-traefik": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/vps-update-traefik-compose.ps1",
     "ops:init-prod-env": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/init-env-prod.ps1",
     "smoke:local": "tsx src/scripts/smoke-local.ts",
     "smoke:local:admin": "tsx src/scripts/smoke-local.ts --require-admin"
