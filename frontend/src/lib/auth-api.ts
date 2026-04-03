@@ -66,7 +66,15 @@ export async function loginWithPassword(
     try {
       data = JSON.parse(text) as unknown;
     } catch {
-      throw new AuthApiError("Nieprawidłowa odpowiedź serwera (nie JSON).", res.status);
+      const looksLikeHtml =
+        text.trimStart().startsWith("<") || /<\s*!doctype\s+html/i.test(text);
+      const hint = looksLikeHtml
+        ? " Frontend prawdopodobnie woła API pod tym samym hostem co strona (nginx zwraca HTML). Ustaw przy buildzie VITE_API_URL na pełny origin API, np. https://api.apexpay.pl."
+        : "";
+      throw new AuthApiError(
+        `Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`,
+        res.status,
+      );
     }
   }
 
