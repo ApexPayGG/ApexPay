@@ -1,8 +1,10 @@
 # Dołączenie do turnieju (escrow / zamrożenie wpisowego). JWT z przeglądarki (F12 → Application → localStorage apexpay_token lub Network → login).
-# Skopiuj: w PowerShell z katalogu repo: Copy-Item join-tournament.private.http.example join-tournament.private.http
+# Skopiuj: Copy-Item join-tournament.private.http.example join-tournament.private.http
 #
-# 1) Uzupełnij @token i @tournamentId (ID z GET /api/tournaments → data.items[].tournamentId).
-# 2) Wyślij poniższy POST. Sukces: 200/201 → w panelu „Odśwież” — saldo ↓, w ledgerze typ ESCROW_HOLD.
+# Krok 3 — WAŻNE: @base = adres serwera docelowego. Na produkcji ZAWSZE https://apexpay.pl (bez końcowego /).
+#           Localhost tylko przy testach lokalnych: http://localhost:3000 — inaczej POST poleci w pustkę / zły host.
+# 1) Uzupełnij @token i @tournamentId (lista: api-tests.http sekcja 6a → data.items[].tournamentId).
+# 2) Send Request na POST. Sukces: 200 → w panelu „Odśwież” — saldo ↓ (np. o wpisowe), w ledgerze ESCROW_HOLD.
 @base = https://apexpay.pl
 @token =
 @tournamentId =
