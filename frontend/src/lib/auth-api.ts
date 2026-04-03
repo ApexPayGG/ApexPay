@@ -10,9 +10,28 @@ export type LoginResponse = {
   updatedAt: string;
 };
 
-/** Bazowy URL API (prod). W dev zwykle pusto — żądania idą na ten sam origin co Vite, proxy przekazuje `/api`. */
+/**
+ * Normalizacja VITE_API_URL: pełny adres musi być tylko originem (bez ścieżki typu /login),
+ * inaczej powstaje np. https://domena.pl/login/api/v1/... → HTML zamiast JSON.
+ */
+function normalizeApiBase(raw: string | undefined): string {
+  const s = raw?.trim() ?? "";
+  if (s === "" || s === "undefined") {
+    return "";
+  }
+  if (!/^https?:\/\//i.test(s)) {
+    return s.replace(/\/+$/, "");
+  }
+  try {
+    return new URL(s).origin;
+  } catch {
+    return s.replace(/\/+$/, "");
+  }
+}
+
+/** Bazowy URL API (prod). Pusto = względne `/api/...` (Ten sam host + reverse proxy). */
 export function apiUrl(path: string): string {
-  const base = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
+  const base = normalizeApiBase(import.meta.env.VITE_API_URL);
   const p = path.startsWith("/") ? path : `/${path}`;
   return base ? `${base}${p}` : p;
 }
@@ -49,11 +68,22 @@ function mapServerErrorMessage(status: number, raw: string): string {
 /**
  * POST `/api/v1/auth/login` — zwraca body z tokenem lub rzuca `AuthApiError`.
  */
+function htmlInsteadOfJsonHint(status: number, url: string): string {
+  if (status === 405) {
+    return ` HTTP ${status} — routing POST /api/… (Traefik: api-inapp.service=api; patrz docker-compose.prod.yml). URL: ${url}`;
+  }
+  if (status === 404) {
+    return ` HTTP ${status} — często zła baza API (VITE_API_URL ze ścieżką /login) albo brak trasy /api na serwerze. URL: ${url}`;
+  }
+  return ` HTTP ${status} — HTML zamiast JSON: sprawdź proxy /api → Node i zmienną VITE_API_URL (pusto lub https://domena bez ścieżki). URL: ${url}`;
+}
+
 export async function loginWithPassword(
   email: string,
   password: string,
 ): Promise<LoginResponse> {
-  const res = await fetch(apiUrl("/api/v1/auth/login"), {
+  const loginUrl = apiUrl("/api/v1/auth/login");
+  const res = await fetch(loginUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -75,14 +105,9 @@ export async function loginWithPassword(
         /<\s*!doctype\s+html/i.test(text) ||
         contentType.includes("text/html");
       const hint = looksLikeHtml
-        ? res.status === 405
-          ? " HTTP 405 + HTML — często Traefik kieruje POST /api/… na kontener web zamiast api: dodaj etykietę traefik.http.routers.api-inapp.service=api i ponów compose up (patrz docker-compose.prod.yml)."
-          : " Serwer zwrócił stronę HTML zamiast JSON — zwykle brak proxy `/api/` do backendu (patrz deploy/nginx/web.conf) albo zły adres API przy buildzie frontu. Opcje: (1) zostaw `VITE_API_URL` puste i zapewnij reverse proxy `https://twoja-domena/api/` → Node; (2) ustaw przy buildzie `VITE_API_URL=https://twoje-api` (np. zmienna repozytorium GitHub `VITE_API_URL`) i `CORS_ORIGIN` na API."
-        : ` (HTTP ${res.status}, Content-Type: ${contentType || "brak"})`;
-      throw new AuthApiError(
-        `Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`,
-        res.status,
-      );
+        ? htmlInsteadOfJsonHint(res.status, loginUrl)
+        : ` (HTTP ${res.status}, Content-Type: ${contentType || "brak"}, URL: ${loginUrl})`;
+      throw new AuthApiError(`Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`, res.status);
     }
   }
 
@@ -148,7 +173,8 @@ export async function registerWithPassword(
   email: string,
   password: string,
 ): Promise<RegisterResponse> {
-  const res = await fetch(apiUrl("/api/v1/auth/register"), {
+  const registerUrl = apiUrl("/api/v1/auth/register");
+  const res = await fetch(registerUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -170,14 +196,9 @@ export async function registerWithPassword(
         /<\s*!doctype\s+html/i.test(text) ||
         contentTypeRegister.includes("text/html");
       const hint = looksLikeHtml
-        ? res.status === 405
-          ? " HTTP 405 + HTML — patrz Traefik api-inapp.service=api i docker-compose.prod.yml."
-          : " Serwer zwrócił HTML zamiast JSON — sprawdź proxy `/api/` do backendu lub `VITE_API_URL` przy buildzie obrazu web."
-        : ` (HTTP ${res.status}, Content-Type: ${contentTypeRegister || "brak"})`;
-      throw new AuthApiError(
-        `Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`,
-        res.status,
-      );
+        ? htmlInsteadOfJsonHint(res.status, registerUrl)
+        : ` (HTTP ${res.status}, Content-Type: ${contentTypeRegister || "brak"}, URL: ${registerUrl})`;
+      throw new AuthApiError(`Nieprawidłowa odpowiedź serwera (nie JSON).${hint}`, res.status);
     }
   }
 

@@ -56,7 +56,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.image }}
 
-      # VITE_API_URL: puste = względne /api na hoście frontu (Traefik + api-inapp w compose, albo nginx w obrazie web).
+      # VITE_API_URL: puste = względne /api na tym samym hoście (zalecane). Jeśli ustawiasz URL — tylko origin,
+      # np. https://apexpay.pl (bez /login). Ścieżka w zmiennej daje błędne .../login/api/v1/... → HTML.
       - name: Build and push web image
         uses: docker/build-push-action@v6
         with:
