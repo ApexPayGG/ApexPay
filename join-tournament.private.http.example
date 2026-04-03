@@ -1,6 +1,7 @@
 # Dołączenie do turnieju (escrow / zamrożenie wpisowego). JWT z przeglądarki (F12 → Application → localStorage apexpay_token lub Network → login).
 # Skopiuj: Copy-Item join-tournament.private.http.example join-tournament.private.http
 #
+# Automat (bez przeglądarki, localhost): uruchom API (npm run dev:api), potem npm run smoke:local:tournament — robi create → list → join → sprawdza saldo i ESCROW_HOLD.
 # Krok 3 — WAŻNE: @base = adres serwera docelowego. Na produkcji ZAWSZE https://apexpay.pl (bez końcowego /).
 #           Localhost tylko przy testach lokalnych: http://localhost:3000 — inaczej POST poleci w pustkę / zły host.
 # 1) Uzupełnij @token i @tournamentId (lista: api-tests.http sekcja 6a → data.items[].tournamentId).

@@ -37,7 +37,8 @@
     "ops:vps-sync:sh": "bash ./scripts/sync-prod-compose-to-server.sh",
     "ops:init-prod-env": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/init-env-prod.ps1",
     "smoke:local": "tsx src/scripts/smoke-local.ts",
-    "smoke:local:admin": "tsx src/scripts/smoke-local.ts --require-admin"
+    "smoke:local:admin": "tsx src/scripts/smoke-local.ts --require-admin",
+    "smoke:local:tournament": "tsx src/scripts/smoke-local.ts --require-admin --tournament"
   },
   "keywords": [],
   "author": "",

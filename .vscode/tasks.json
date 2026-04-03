@@ -122,6 +122,18 @@
       }
     },
     {
+      "label": "ApexPay: Smoke — turniej + escrow (API localhost:3000)",
+      "detail": "Wymaga: uruchomione API (npm run dev:api), DATABASE_URL w .env dla upsert admina.",
+      "type": "npm",
+      "script": "smoke:local:tournament",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      }
+    },
+    {
       "label": "ApexPay: Typecheck (API + frontend)",
       "type": "npm",
       "script": "typecheck",
