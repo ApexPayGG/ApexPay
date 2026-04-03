@@ -75,3 +75,23 @@ Authorization: Bearer {{token}}
 POST {{baseUrl}}/tournaments/{{tournamentId}}/join
 Content-Type: application/json
 Authorization: Bearer {{token}}
+
+### 6. Produkcja — zasil portfel ADMIN (Etap 1 / ledger)
+# Pełny opis + nagłówek Bearer: patrz też plik fund-wallet.http w katalogu głównym repo.
+@prodBase = https://apexpay.pl
+@prodToken = WKLEJ_JWT_Z_LOGOWANIA
+@adminUserId = WKLEJ_CUID_Z_auth_me
+
+GET {{prodBase}}/api/v1/auth/me
+Authorization: Bearer {{prodToken}}
+Accept: application/json
+
+POST {{prodBase}}/api/v1/wallet/fund
+Content-Type: application/json
+Authorization: Bearer {{prodToken}}
+Accept: application/json
+
+{
+  "targetUserId": "{{adminUserId}}",
+  "amount": "100000"
+}
