@@ -12,8 +12,9 @@ x-logging: &json-file-rotating
     max-file: "3"
 
 services:
+  # v3.0 używał Docker API 1.24 — na Docker Engine 28.5+ / 29 daemon odrzuca klienta (min. 1.40/1.44). v3.6+ negocjuje API.
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6.7
     restart: unless-stopped
     networks:
       - apexpay_prod_network
