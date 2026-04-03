@@ -29,18 +29,40 @@ type AdminTransactionsResponse = {
   items: AdminTransactionRow[];
 };
 
+/** Salda i kwoty transakcji w API są w groszach (minor units). */
+function formatGroszeAsPln(raw: string): string {
+  try {
+    const n = BigInt(raw.trim());
+    const neg = n < 0n;
+    const v = neg ? -n : n;
+    const zl = v / 100n;
+    const gr = Number(v % 100n);
+    const frac = gr.toString().padStart(2, "0");
+    const s = `${zl.toLocaleString("pl-PL")},${frac}`;
+    return neg ? `-${s}` : s;
+  } catch {
+    return raw;
+  }
+}
+
 function parseBalance(raw: string): string {
-  const normalized = Number(raw);
-  if (!Number.isFinite(normalized)) return raw;
-  return normalized.toLocaleString("pl-PL");
+  return formatGroszeAsPln(raw);
 }
 
 function formatAmount(raw: string): { text: string; cls: string } {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return { text: raw, cls: "" };
-  if (n > 0) return { text: `+${n.toLocaleString("pl-PL")}`, cls: "is-positive" };
-  if (n < 0) return { text: n.toLocaleString("pl-PL"), cls: "is-negative" };
-  return { text: "0", cls: "" };
+  try {
+    const n = BigInt(raw.trim());
+    const absPln = formatGroszeAsPln((n < 0n ? -n : n).toString());
+    if (n > 0n) return { text: `+${absPln}`, cls: "is-positive" };
+    if (n < 0n) return { text: `-${absPln}`, cls: "is-negative" };
+    return { text: "0,00", cls: "" };
+  } catch {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return { text: raw, cls: "" };
+    if (n > 0) return { text: `+${n.toLocaleString("pl-PL")}`, cls: "is-positive" };
+    if (n < 0) return { text: n.toLocaleString("pl-PL"), cls: "is-negative" };
+    return { text: "0", cls: "" };
+  }
 }
 
 function formatDatePl(value: string): string {
