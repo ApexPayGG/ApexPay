@@ -6,6 +6,8 @@ node_modules
 .env.*
 !.env.example
 !.env.prod.example
+# Częsta nazwa z tutoriali — nie jest objęta .env.*; ignoruj, żeby nie wypchnąć sekretów.
+prod.env
 test.http
 *.local.http
 # Tokeny / CUID do REST Client — kopia lokalna z .example
