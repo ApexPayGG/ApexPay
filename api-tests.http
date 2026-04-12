@@ -115,3 +115,26 @@ Accept: application/json
   "targetUserId": "{{adminUserId}}",
   "amount": "100000"
 }
+
+### 7. SAFE TAXI — przejazd (prod: ustaw SAFE_TAXI_PLATFORM_USER_ID na serwerze)
+# Utwórz przejazd jako pasażer (JWT), potem rozlicz jako kierowca (JWT kierowcy) lub ADMIN.
+@stxDriverId = WKLEJ_CUID_KIEROWCY
+@stxRideId = WKLEJ_PO_CREATE
+
+POST {{prodBase}}/api/v1/safe-taxi/rides
+Content-Type: application/json
+Authorization: Bearer {{prodToken}}
+Accept: application/json
+
+{
+  "driverUserId": "{{stxDriverId}}"
+}
+
+POST {{prodBase}}/api/v1/safe-taxi/rides/{{stxRideId}}/settle
+Content-Type: application/json
+Authorization: Bearer {{prodToken}}
+Accept: application/json
+
+{
+  "fareCents": "5000"
+}

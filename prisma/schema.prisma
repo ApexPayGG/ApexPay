@@ -10,6 +10,7 @@ datasource db {
 enum UserRole {
   PLAYER
   ADMIN
+  DRIVER
 }
 
 // --- CORE: Autoryzacja i Użytkownik ---
@@ -28,6 +29,8 @@ model User {
   balanceLedgerEntries UserBalanceLedger[]
   matchesAsPlayerA     Match[]                 @relation("MatchPlayerA")
   matchesAsPlayerB     Match[]                 @relation("MatchPlayerB")
+  ridesAsPassenger     SafeTaxiRide[]          @relation("RidePassenger")
+  ridesAsDriver        SafeTaxiRide[]          @relation("RideDriver")
 }
 
 // --- FINANSE: Portfele i Księga Główna (Ledger) ---
@@ -62,6 +65,35 @@ enum TransactionType {
   ESCROW_HOLD   // Blokada środków na wpisowe
   PRIZE_PAYOUT  // Wypłata nagrody
   REFUND
+  SAFE_TAXI_PASSENGER_CHARGE
+  SAFE_TAXI_DRIVER_PAYOUT
+  SAFE_TAXI_PLATFORM_FEE
+}
+
+// --- SAFE TAXI: przejazd + rozliczenie (pasażer → platforma + kierowca) ---
+model SafeTaxiRide {
+  id                     String             @id @default(cuid())
+  passengerId            String
+  driverId               String
+  status                 SafeTaxiRideStatus @default(CREATED)
+  fareCents              BigInt?
+  platformCommissionCents BigInt?
+  driverPayoutCents      BigInt?
+  settledAt              DateTime?
+  createdAt              DateTime           @default(now())
+
+  passenger User @relation("RidePassenger", fields: [passengerId], references: [id])
+  driver    User @relation("RideDriver", fields: [driverId], references: [id])
+
+  @@index([passengerId, createdAt(sort: Desc)])
+  @@index([driverId, status])
+  @@map("safe_taxi_rides")
+}
+
+enum SafeTaxiRideStatus {
+  CREATED
+  SETTLED
+  CANCELED
 }
 
 // --- APEXPAY: Silnik Turniejowy B2B2C ---

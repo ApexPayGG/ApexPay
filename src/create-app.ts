@@ -16,6 +16,7 @@ import { AdminController } from "./controllers/admin.controller.js";
 import { AuthController } from "./controllers/auth.controller.js";
 import { MatchController } from "./controllers/match.controller.js";
 import { MatchResolveV1Controller } from "./controllers/match-resolve-v1.controller.js";
+import { SafeTaxiController } from "./controllers/safe-taxi.controller.js";
 import { TournamentController } from "./controllers/tournament.controller.js";
 import { PspDepositWebhookController } from "./controllers/psp-deposit-webhook.controller.js";
 import { WalletController } from "./controllers/wallet.controller.js";
@@ -39,6 +40,7 @@ import { ClearingService } from "./services/clearing.service.js";
 import { MatchSettlementService } from "./services/match-settlement.service.js";
 import { TournamentBracketService } from "./services/tournament-bracket.service.js";
 import { PspDepositWebhookService } from "./services/psp-deposit-webhook.service.js";
+import { SafeTaxiService } from "./services/safe-taxi.service.js";
 import { WalletService } from "./services/wallet.service.js";
 import { WebSocketService } from "./services/websocket.service.js";
 
@@ -114,6 +116,8 @@ export function createApp(options: CreateAppOptions): {
     () => process.env.PSP_DEPOSIT_WEBHOOK_SECRET?.trim() || undefined,
   );
   const tournamentController = new TournamentController();
+  const safeTaxiService = new SafeTaxiService(options.prisma);
+  const safeTaxiController = new SafeTaxiController(safeTaxiService);
 
   const httpServer = createServer(app);
   const wsService =
@@ -223,6 +227,13 @@ export function createApp(options: CreateAppOptions): {
   });
   app.post("/api/wallet/transfer", authMiddleware, (req, res) => {
     void walletController.transfer(req, res);
+  });
+
+  app.post("/api/v1/safe-taxi/rides", authMiddleware, (req, res) => {
+    void safeTaxiController.createRide(req, res);
+  });
+  app.post("/api/v1/safe-taxi/rides/:id/settle", authMiddleware, (req, res) => {
+    void safeTaxiController.settleRide(req, res);
   });
 
   app.get("/api/tournaments", authMiddleware, (req, res) => {

@@ -44,6 +44,15 @@ Base URL produkcji: `https://api.apexpay.pl`. Wiele tras jest zdublowanych pod *
 | POST | `/api/wallet/deposit` | tak | Wpłata zewnętrzna (`amount`, `referenceId`). |
 | POST | `/api/wallet/charge` | tak | Opłata (`amount`, `referenceId`). |
 
+## SAFE TAXI (rozliczenie przejazdu)
+
+Wymaga w `.env`: **`SAFE_TAXI_PLATFORM_USER_ID`** (CUID użytkownika z portfelem — „konto platformy”), opcjonalnie **`SAFE_TAXI_PLATFORM_COMMISSION_BPS`** (domyślnie `1500` = 15 %).
+
+| Metoda | Ścieżka | Auth | Opis |
+|--------|---------|------|------|
+| POST | `/api/v1/safe-taxi/rides` | tak (pasażer = JWT) | Body: `{ "driverUserId": "<CUID>" }`. Tworzy przejazd `CREATED`. |
+| POST | `/api/v1/safe-taxi/rides/:id/settle` | kierowca tego przejazdu **lub** **ADMIN** | Body: `{ "fareCents": "12345" }` (grosze). Pobiera taryfę z portfela pasażera; dzieli na kierowcę i platformę; wpisy ledger: `SAFE_TAXI_*`. |
+
 ## Admin
 
 | Metoda | Ścieżka | Auth | Opis |
