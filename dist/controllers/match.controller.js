@@ -1,5 +1,6 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 import { ClearingService } from "../services/clearing.service.js";
+import { TournamentBracketService } from "../services/tournament-bracket.service.js";
 function paramId(raw) {
     if (typeof raw === "string") {
         return raw;
@@ -9,14 +10,41 @@ function paramId(raw) {
     }
     return undefined;
 }
+function matchHasAssignedPlayers(match) {
+    return match.playerAId != null && match.playerBId != null;
+}
+function assertReportPlayersAllowed(match, reporterId, claimedWinnerId) {
+    if (!matchHasAssignedPlayers(match)) {
+        return;
+    }
+    const allowed = new Set([match.playerAId, match.playerBId]);
+    if (!allowed.has(reporterId)) {
+        throw new Error("REPORTER_NOT_IN_MATCH");
+    }
+    if (!allowed.has(claimedWinnerId)) {
+        throw new Error("CLAIMED_WINNER_NOT_IN_MATCH");
+    }
+}
+function assertResolveWinnerInMatch(match, finalWinnerId) {
+    if (!matchHasAssignedPlayers(match)) {
+        return;
+    }
+    const allowed = new Set([match.playerAId, match.playerBId]);
+    if (!allowed.has(finalWinnerId)) {
+        throw new Error("WINNER_NOT_IN_MATCH");
+    }
+}
 export class MatchController {
     prisma;
     clearingService;
     wsService;
-    constructor(prisma, clearingService, wsService) {
+    bracketService;
+    constructor(prisma, clearingService, wsService, bracketService) {
         this.prisma = prisma;
         this.clearingService = clearingService;
         this.wsService = wsService;
+        this.bracketService =
+            bracketService ?? new TournamentBracketService(prisma);
     }
     async reportResult(req, res) {
         try {
@@ -49,6 +77,7 @@ export class MatchController {
                 if (match.status !== "PENDING") {
                     throw new Error("MATCH_CLOSED_OR_DISPUTED");
                 }
+                assertReportPlayersAllowed(match, trimmedReporter, trimmedClaimedWinner);
                 await tx.matchReport.create({
                     data: {
                         matchId,
@@ -71,10 +100,12 @@ export class MatchController {
                                     winnerId: r1.claimedWinnerId,
                                 },
                             });
-                            await this.clearingService.processPayout(matchId, r1.claimedWinnerId, tx);
+                            const prizePaid = await this.clearingService.processPayout(matchId, r1.claimedWinnerId, tx);
+                            await this.bracketService.advanceAfterTerminalMatch(match.tournamentId, tx);
                             return {
                                 status: "RESOLVED",
                                 winnerId: r1.claimedWinnerId,
+                                prizePaid,
                             };
                         }
                         await tx.match.update({
@@ -90,7 +121,10 @@ export class MatchController {
                 maxWait: 5000,
                 timeout: 10000,
             });
-            if (result.status === "RESOLVED" && "winnerId" in result) {
+            if (result.status === "RESOLVED" &&
+                "winnerId" in result &&
+                "prizePaid" in result &&
+                result.prizePaid) {
                 this.wsService.notifyWallet(result.winnerId, "PAYOUT_RECEIVED", {
                     message: "Konsensus potwierdzony. Środki z rozliczenia meczu wpłynęły na portfel.",
                     matchId,
@@ -129,6 +163,18 @@ export class MatchController {
                 });
                 return;
             }
+            if (msg === "REPORTER_NOT_IN_MATCH") {
+                res.status(403).json({
+                    error: "Tylko zawodnicy przypisani do tego meczu mogą zgłaszać wynik.",
+                });
+                return;
+            }
+            if (msg === "CLAIMED_WINNER_NOT_IN_MATCH") {
+                res.status(400).json({
+                    error: "Zwycięzca musi być jednym z graczy tego meczu.",
+                });
+                return;
+            }
             res.status(500).json({
                 error: "Wewnętrzny błąd silnika konsensusu.",
             });
@@ -147,6 +193,7 @@ export class MatchController {
             }
             const matchId = rawMatchId.trim();
             const winnerId = finalWinnerId.trim();
+            let prizePaid = false;
             await this.prisma.$transaction(async (tx) => {
                 const match = await tx.match.findUnique({ where: { id: matchId } });
                 if (!match) {
@@ -155,20 +202,25 @@ export class MatchController {
                 if (match.status === "RESOLVED") {
                     throw new Error("ALREADY_RESOLVED");
                 }
+                assertResolveWinnerInMatch(match, winnerId);
+                const tournamentId = match.tournamentId;
                 await tx.match.update({
                     where: { id: matchId },
                     data: { status: "RESOLVED", winnerId },
                 });
-                await this.clearingService.processPayout(matchId, winnerId, tx);
+                prizePaid = await this.clearingService.processPayout(matchId, winnerId, tx);
+                await this.bracketService.advanceAfterTerminalMatch(tournamentId, tx);
             }, {
                 isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
                 maxWait: 5000,
                 timeout: 10000,
             });
-            this.wsService.notifyWallet(winnerId, "PAYOUT_RECEIVED", {
-                message: "Spór rozstrzygnięty na Twoją korzyść. Środki wpłynęły na portfel.",
-                matchId,
-            });
+            if (prizePaid) {
+                this.wsService.notifyWallet(winnerId, "PAYOUT_RECEIVED", {
+                    message: "Spór rozstrzygnięty na Twoją korzyść. Środki wpłynęły na portfel.",
+                    matchId,
+                });
+            }
             res.status(200).json({
                 status: "success",
                 message: "Spór rozstrzygnięty. Środki rozksięgowane.",
@@ -190,6 +242,12 @@ export class MatchController {
             }
             if (msg === "ALREADY_RESOLVED") {
                 res.status(409).json({ error: "Mecz jest już rozstrzygnięty." });
+                return;
+            }
+            if (msg === "WINNER_NOT_IN_MATCH") {
+                res.status(400).json({
+                    error: "Zwycięzca musi być jednym z graczy tego meczu.",
+                });
                 return;
             }
             if (msg?.startsWith("CRITICAL:")) {

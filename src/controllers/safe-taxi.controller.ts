@@ -4,7 +4,9 @@ import {
   InsufficientFundsError,
   WalletNotFoundError,
 } from "../services/wallet.service.js";
+import { RidePaymentMethod } from "@prisma/client";
 import {
+  DriverDebtLimitExceededError,
   SafeTaxiConfigError,
   SafeTaxiInvalidStateError,
   SafeTaxiRideNotFoundError,
@@ -22,7 +24,7 @@ export class SafeTaxiController {
         return;
       }
 
-      const body = req.body as { driverUserId?: unknown };
+      const body = req.body as { driverUserId?: unknown; paymentMethod?: unknown };
       const driverUserId =
         typeof body.driverUserId === "string" ? body.driverUserId.trim() : "";
       if (driverUserId.length === 0) {
@@ -30,10 +32,26 @@ export class SafeTaxiController {
         return;
       }
 
-      const out = await this.service.createRide(passengerId, driverUserId);
+      let paymentMethod: RidePaymentMethod = RidePaymentMethod.CARD;
+      const rawPm = body.paymentMethod;
+      if (rawPm === "CASH") {
+        paymentMethod = RidePaymentMethod.CASH;
+      } else if (
+        rawPm !== undefined &&
+        rawPm !== null &&
+        rawPm !== "" &&
+        rawPm !== "CARD"
+      ) {
+        res.status(400).json({
+          error: "paymentMethod musi być CARD lub CASH (opcjonalnie, domyślnie CARD).",
+        });
+        return;
+      }
+
+      const out = await this.service.createRide(passengerId, driverUserId, paymentMethod);
       res.status(201).json({
         status: "success",
-        data: { rideId: out.rideId },
+        data: { rideId: out.rideId, paymentMethod },
       });
     } catch (err) {
       if (err instanceof WalletNotFoundError) {
@@ -42,6 +60,13 @@ export class SafeTaxiController {
       }
       if (err instanceof SafeTaxiInvalidStateError) {
         res.status(400).json({ error: err.message });
+        return;
+      }
+      if (err instanceof DriverDebtLimitExceededError) {
+        res.status(403).json({
+          error: err.message,
+          code: "DRIVER_DEBT_LIMIT",
+        });
         return;
       }
       console.error("[SafeTaxi] createRide:", err);
@@ -122,6 +147,13 @@ export class SafeTaxiController {
       }
       if (err instanceof InsufficientFundsError) {
         res.status(402).json({ error: "Niewystarczające środki u pasażera." });
+        return;
+      }
+      if (err instanceof DriverDebtLimitExceededError) {
+        res.status(403).json({
+          error: err.message,
+          code: "DRIVER_DEBT_LIMIT",
+        });
         return;
       }
       if (err instanceof WalletNotFoundError) {

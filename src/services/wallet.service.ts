@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient, Transaction, TransactionType } from "@prisma/client";
 import { Prisma, TransactionType as TxType } from "@prisma/client";
+import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
 
 export class InsufficientFundsError extends Error {
   constructor() {
@@ -139,7 +140,7 @@ export class WalletService {
           data: { balance: { decrement: amount } },
         });
       } catch (err) {
-        if (this.isInsufficientFundsDbError(err)) {
+        if (isInsufficientFundsDbError(err)) {
           throw new InsufficientFundsError();
         }
         throw err;
@@ -174,15 +175,22 @@ export class WalletService {
   async listTransactionsAdmin(
     skip: number,
     take: number,
+    options?: { referenceIdPrefix?: string },
   ): Promise<{ items: AdminTransactionRow[]; total: number }> {
+    const raw = options?.referenceIdPrefix?.trim() ?? "";
+    const prefix = raw.length > 0 ? raw.slice(0, 128) : "";
+    const where =
+      prefix.length > 0 ? { referenceId: { startsWith: prefix } } : {};
+
     const [rows, total] = await Promise.all([
       this.prisma.transaction.findMany({
+        where,
         orderBy: { createdAt: "desc" },
         skip,
         take,
         include: { wallet: { select: { userId: true } } },
       }),
-      this.prisma.transaction.count(),
+      this.prisma.transaction.count({ where }),
     ]);
 
     return {
@@ -233,6 +241,64 @@ export class WalletService {
     });
   }
 
+  /**
+   * Wpłata z webhooka PSP: `referenceId` = `dep:{pspRefId}`, izolacja Serializable.
+   * Używane razem z idempotencją Redis przed wywołaniem.
+   */
+  async depositFundsPspWebhook(
+    userId: string,
+    amount: bigint,
+    pspRefId: string,
+  ): Promise<{ transaction: Transaction; created: boolean }> {
+    if (amount <= 0n) {
+      throw new RangeError("Deposit amount must be strictly positive");
+    }
+    const trimmedRef = pspRefId.trim();
+    if (trimmedRef.length === 0) {
+      throw new RangeError("pspRefId is required");
+    }
+    const referenceId = `dep:${trimmedRef}`;
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.transaction.findFirst({
+          where: { referenceId },
+        });
+        if (existing !== null) {
+          return { transaction: existing, created: false };
+        }
+
+        const wallet = await tx.wallet.findUnique({
+          where: { userId },
+          select: { id: true },
+        });
+        if (wallet === null) {
+          throw new WalletNotFoundError();
+        }
+
+        await tx.wallet.update({
+          where: { userId },
+          data: { balance: { increment: amount } },
+        });
+
+        const transaction = await tx.transaction.create({
+          data: {
+            walletId: wallet.id,
+            amount,
+            referenceId,
+            type: TxType.DEPOSIT,
+          },
+        });
+        return { transaction, created: true };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5000,
+        timeout: 10000,
+      },
+    );
+  }
+
   async processEntryFee(
     userId: string,
     amount: bigint,
@@ -259,7 +325,7 @@ export class WalletService {
         });
         walletId = updated.id;
       } catch (err) {
-        if (this.isInsufficientFundsDbError(err)) {
+        if (isInsufficientFundsDbError(err)) {
           throw new InsufficientFundsError();
         }
         throw err;
@@ -274,22 +340,5 @@ export class WalletService {
         },
       });
     });
-  }
-
-  private isInsufficientFundsDbError(err: unknown): boolean {
-    if (!(err instanceof Prisma.PrismaClientKnownRequestError)) {
-      return false;
-    }
-    if (err.code === "P2025") {
-      return true;
-    }
-    if (err.message.includes("wallet_balance_check")) {
-      return true;
-    }
-    const meta = err.meta as { constraint?: string } | undefined;
-    if (meta?.constraint === "wallet_balance_check") {
-      return true;
-    }
-    return false;
   }
 }

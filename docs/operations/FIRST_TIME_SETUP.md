@@ -170,8 +170,8 @@ muszą być m.in. (nazwy jak w `docker-compose.prod.yml`):
 - `DATABASE_URL` — connection string do Postgres na serwerze (serwis `postgres` w sieci Compose).
 - `JWT_SECRET` — długi losowy sekret (nie ten sam co dev).
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-- `REDIS_URL` — zwykle `redis://redis:6379` wewnątrz sieci Compose.
-- `RABBITMQ_URL`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`
+- `REDIS_URL` — zwykle `redis://redis:6379` wewnątrz sieci Compose (idempotencja, limity, health `ready`).
+- `RABBITMQ_URL` — np. `amqp://USER:PASS@rabbitmq:5672` w Compose; musi być zgodny z `RABBITMQ_DEFAULT_USER` / `RABBITMQ_DEFAULT_PASS` (obraz `rabbitmq:3-management-alpine`). Panel zarządzania: na hoście tylko **`http://127.0.0.1:15672`** (mapowanie z `docker-compose.prod.yml`, nie wystawiaj go na 0.0.0.0 bez Traefik/IP allowlist).
 - `ACME_EMAIL` — email do Let’s Encrypt (Traefik).
 - `API_DOMAIN` — FQDN API, np. `api.twojadomena.pl`
 - `APP_DOMAIN` — FQDN frontendu, np. `apexpay.pl`

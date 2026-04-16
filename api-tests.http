@@ -7,16 +7,17 @@
 @token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbW5iaTJ4Mm0wMDAwaWtod3Y4OHo2cXhpIiwiaWF0IjoxNzc0Nzc1Nzc1LCJleHAiOjE3NzQ4NjIxNzV9.fb7L0fGHfdKrEwShjc9wHe3oUv6z7fNQ_RqLbqwHqhk
 
 ### Webhook PSP — wpłata (HMAC-SHA256 hex surowego body w nagłówku x-apexpay-signature; sekret = PSP_DEPOSIT_WEBHOOK_SECRET)
-# Przykład podpisu (bash): BODY='{"paymentId":"evt_1","userId":"USER_CUID","amountMinor":"5000","status":"succeeded"}'; printf '%s' "$BODY" | openssl dgst -sha256 -hmac "TWÓJ_SEKRET" | awk '{print $2}'
+# Przykład podpisu (bash): BODY='{"pspRefId":"evt_1","userId":"USER_CUID","amount":5000,"currency":"PLN","status":"SUCCESS"}'; printf '%s' "$BODY" | openssl dgst -sha256 -hmac "TWÓJ_SEKRET" | awk '{print $2}'
 POST {{rootUrl}}/internal/webhooks/psp-deposit
 Content-Type: application/json
 x-apexpay-signature: WKLEJ_HEX_64_ZNAKI
 
 {
-  "paymentId": "evt_1",
+  "pspRefId": "evt_1",
   "userId": "USER_CUID",
-  "amountMinor": "5000",
-  "status": "succeeded"
+  "amount": 5000,
+  "currency": "PLN",
+  "status": "SUCCESS"
 }
 
 ### 0. Rejestracja (Zwróci 409 Conflict - to prawidłowe, konto już istnieje)
@@ -137,4 +138,39 @@ Accept: application/json
 
 {
   "fareCents": "5000"
+}
+
+### Marketplace (ADMIN) — subkonto + charge split (localhost; podmień CUID i token ADMIN)
+# @mktUserId = użytkownik z portfelem
+# @mktConnId = z odpowiedzi POST .../connected-accounts
+@mktUserId = WKLEJ_CUID
+@mktConnId = WKLEJ_CONNECTED_ACCOUNT_ID
+
+POST http://localhost:3000/api/v1/connected-accounts
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "userId": "{{mktUserId}}"
+}
+
+PATCH http://localhost:3000/api/v1/connected-accounts/{{mktConnId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "status": "ACTIVE"
+}
+
+POST http://localhost:3000/api/v1/charges
+Content-Type: application/json
+Authorization: Bearer {{token}}
+Idempotency-Key: test-charge-001
+
+{
+  "debitUserId": "{{mktUserId}}",
+  "amountCents": "1000",
+  "splits": [
+    { "connectedAccountId": "{{mktConnId}}", "amountCents": "1000" }
+  ]
 }

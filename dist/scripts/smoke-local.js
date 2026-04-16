@@ -4,6 +4,7 @@
  * Usage:
  *   npm run smoke:local
  *   npm run smoke:local:admin
+ *   npm run smoke:local:tournament   # wymaga działającego API + DB; pełna ścieżka escrow (create → join → ledger)
  *
  * Optional env:
  *   SMOKE_EMAIL=smoke.user@example.com
@@ -24,6 +25,7 @@ function env(name, fallback) {
     return v.trim();
 }
 const REQUIRE_ADMIN = process.argv.includes("--require-admin");
+const RUN_TOURNAMENT = process.argv.includes("--tournament");
 const API_BASE_URL = env("API_BASE_URL", "http://localhost:3000");
 const SMOKE_EMAIL = env("SMOKE_EMAIL", REQUIRE_ADMIN ? "admin@apexpay.pl" : "smoke.user@example.com");
 const SMOKE_PASSWORD = env("SMOKE_PASSWORD", REQUIRE_ADMIN ? "PotezneHasloAdmina!" : "SmokeHaslo123!");
@@ -72,7 +74,10 @@ function assertStatus(res, allowed, payload, step) {
 async function main() {
     console.log(`[smoke] API: ${API_BASE_URL}`);
     console.log(`[smoke] User: ${SMOKE_EMAIL}`);
-    console.log(`[smoke] Mode: ${REQUIRE_ADMIN ? "ADMIN" : "STANDARD"}`);
+    console.log(`[smoke] Mode: ${REQUIRE_ADMIN ? "ADMIN" : "STANDARD"}${RUN_TOURNAMENT ? " +TOURNAMENT" : ""}`);
+    if (RUN_TOURNAMENT && !REQUIRE_ADMIN) {
+        throw new Error("Użyj: npm run smoke:local:tournament (wymaga --require-admin: fund + turniej + join jako ten sam użytkownik)");
+    }
     if (REQUIRE_ADMIN) {
         const databaseUrl = process.env.DATABASE_URL?.trim();
         if (databaseUrl === undefined || databaseUrl.length === 0) {
@@ -152,6 +157,71 @@ async function main() {
     }
     else {
         console.log("[smoke] wallet/fund skipped (requires ADMIN role)");
+    }
+    if (RUN_TOURNAMENT) {
+        const entryFeeCents = "500";
+        const createRes = await postJson("/api/tournaments", {
+            title: `[smoke] ${new Date().toISOString()}`,
+            entryFeeCents,
+            maxPlayers: 8,
+            registrationEndsInHours: 48,
+        }, token);
+        const createPayload = await readJsonSafe(createRes);
+        assertStatus(createRes, [201], createPayload, "tournaments/create");
+        const data = createPayload.data;
+        const tournamentId = data !== undefined && typeof data.tournamentId === "string"
+            ? data.tournamentId
+            : undefined;
+        if (tournamentId === undefined || tournamentId.length === 0) {
+            throw new Error(`create tournament: brak data.tournamentId w ${JSON.stringify(createPayload)}`);
+        }
+        console.log(`[smoke] tournaments/create -> 201 (id=${tournamentId})`);
+        const listRes = await getJson("/api/tournaments?limit=10", token);
+        const listPayload = await readJsonSafe(listRes);
+        assertStatus(listRes, [200], listPayload, "tournaments/list");
+        const items = listPayload.data?.items;
+        const inList = Array.isArray(items) &&
+            items.some((it) => typeof it === "object" &&
+                it !== null &&
+                it.tournamentId === tournamentId);
+        if (!inList) {
+            throw new Error(`tournament ${tournamentId} not found in list response`);
+        }
+        console.log("[smoke] tournaments/list -> 200 (turniej na liście)");
+        const walletBeforeJoin = await getJson("/api/v1/wallet/me", token);
+        const wBefore = await readJsonSafe(walletBeforeJoin);
+        assertStatus(walletBeforeJoin, [200], wBefore, "wallet/me before join");
+        const balBefore = BigInt(String(wBefore.balance ?? "0"));
+        const joinRes = await postJson(`/api/tournaments/${tournamentId}/join`, {}, token);
+        const joinPayload = await readJsonSafe(joinRes);
+        assertStatus(joinRes, [200], joinPayload, "tournaments/join");
+        console.log("[smoke] tournaments/join -> 200 (escrow)");
+        const walletAfterJoin = await getJson("/api/v1/wallet/me", token);
+        const wAfter = await readJsonSafe(walletAfterJoin);
+        assertStatus(walletAfterJoin, [200], wAfter, "wallet/me after join");
+        const balAfter = BigInt(String(wAfter.balance ?? "0"));
+        const fee = BigInt(entryFeeCents);
+        if (balBefore - balAfter !== fee) {
+            throw new Error(`expected balance drop ${fee}, got before=${balBefore} after=${balAfter}`);
+        }
+        console.log(`[smoke] wallet balance OK: -${fee} minor units`);
+        const txRes = await getJson("/api/v1/admin/transactions?limit=30", token);
+        const txPayload = await readJsonSafe(txRes);
+        assertStatus(txRes, [200], txPayload, "admin/transactions");
+        const txItems = txPayload.items;
+        const hasEscrow = Array.isArray(txItems) &&
+            txItems.some((row) => {
+                if (typeof row !== "object" || row === null)
+                    return false;
+                const r = row;
+                return (r.type === "ESCROW_HOLD" &&
+                    r.walletUserId === userId &&
+                    String(r.amount ?? "") === entryFeeCents);
+            });
+        if (!hasEscrow) {
+            throw new Error(`brak wpisu ESCROW_HOLD dla userId=${userId} amount=${entryFeeCents} w admin/transactions`);
+        }
+        console.log("[smoke] admin/transactions -> ESCROW_HOLD znaleziony");
     }
     console.log("[smoke] DONE");
 }

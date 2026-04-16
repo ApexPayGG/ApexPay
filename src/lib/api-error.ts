@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { getContext } from "./request-context.js";
 
 /** Stabilne kody dla klientów (front / integracje). Komunikat może być PL lub EN w zależności od endpointu. */
 export const ApiErrorCode = {
@@ -9,6 +10,7 @@ export const ApiErrorCode = {
   CONFLICT: "CONFLICT",
   PAYMENT_REQUIRED: "PAYMENT_REQUIRED",
   TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
+  SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
   INTERNAL: "INTERNAL_ERROR",
 } as const;
 
@@ -20,5 +22,13 @@ export function sendApiError(
   code: ApiErrorCodeType,
   message: string,
 ): void {
-  res.status(status).json({ error: message, code });
+  const { traceId } = getContext();
+  const body: { error: string; code: ApiErrorCodeType; traceId?: string } = {
+    error: message,
+    code,
+  };
+  if (traceId !== undefined) {
+    body.traceId = traceId;
+  }
+  res.status(status).json(body);
 }

@@ -1,21 +1,27 @@
 import type { Transaction } from "@prisma/client";
+import type { Redis } from "ioredis";
 import { z } from "zod";
 import type { WalletService } from "./wallet.service.js";
-export declare const PSP_DEPOSIT_REFERENCE_PREFIX = "psp_deposit:";
+/** Prefiks klucza Redis: `idemp:deposit:{pspRefId}` */
+export declare const PSP_DEPOSIT_IDEMP_KEY_PREFIX = "idemp:deposit:";
+/** Prefiks wpisu ledger dla webhooka PSP (zgodny z wymaganiami integracji). */
+export declare const PSP_DEPOSIT_LEDGER_REFERENCE_PREFIX = "dep:";
 declare const payloadSchema: z.ZodObject<{
-    paymentId: z.ZodString;
+    pspRefId: z.ZodString;
+    amount: z.ZodNumber;
     userId: z.ZodString;
-    amountMinor: z.ZodString;
+    currency: z.ZodString;
     status: z.ZodEnum<{
-        succeeded: "succeeded";
-        failed: "failed";
-        pending: "pending";
-        canceled: "canceled";
+        PENDING: "PENDING";
+        FAILED: "FAILED";
+        SUCCESS: "SUCCESS";
     }>;
 }, z.core.$strict>;
 export type PspDepositPayload = z.infer<typeof payloadSchema>;
 export type PspDepositWebhookResult = {
     outcome: "ignored_status";
+} | {
+    outcome: "redis_duplicate";
 } | {
     outcome: "credited";
     transaction: Transaction;
@@ -23,10 +29,12 @@ export type PspDepositWebhookResult = {
 };
 export declare class PspDepositWebhookService {
     private readonly walletService;
-    constructor(walletService: WalletService);
+    private readonly redis;
+    constructor(walletService: WalletService, redis: Redis);
     parseBody(body: unknown): PspDepositPayload;
     /**
-     * Tylko `succeeded` księguje wpłatę. Idempotencja: `referenceId` = `psp_deposit:{paymentId}`.
+     * Tylko `SUCCESS` księguje wpłatę.
+     * Idempotencja: Redis `SET … NX EX 86400` na `idemp:deposit:{pspRefId}`, potem ledger `dep:{pspRefId}`.
      */
     applyDeposit(payload: PspDepositPayload): Promise<PspDepositWebhookResult>;
 }

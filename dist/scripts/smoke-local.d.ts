@@ -4,6 +4,7 @@
  * Usage:
  *   npm run smoke:local
  *   npm run smoke:local:admin
+ *   npm run smoke:local:tournament   # wymaga działającego API + DB; pełna ścieżka escrow (create → join → ledger)
  *
  * Optional env:
  *   SMOKE_EMAIL=smoke.user@example.com

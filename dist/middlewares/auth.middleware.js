@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { attachUserToRequestContext } from "../lib/request-context.js";
 const MSG_NO_TOKEN = "Brak tokena dostępu. Odmowa dostępu.";
 const MSG_TOKEN_INVALID = "Token wygasł lub jest nieprawidłowy.";
 const MSG_FORBIDDEN_ROLE = "Brak uprawnień do wykonania tej operacji.";
@@ -52,6 +53,7 @@ export const authenticateToken = (req, res, next) => {
             res.status(403).json({ error: MSG_TOKEN_INVALID });
             return;
         }
+        attachUserToRequestContext(req);
         next();
     }
     catch {
@@ -75,6 +77,7 @@ export function authMiddleware(req, res, next) {
             res.status(403).json({ error: MSG_TOKEN_INVALID });
             return;
         }
+        attachUserToRequestContext(req);
         next();
     }
     catch {

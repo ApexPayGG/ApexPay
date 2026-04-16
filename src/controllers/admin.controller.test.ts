@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { PayoutService } from "../services/payout.service.js";
 import type { WalletService } from "../services/wallet.service.js";
 import { AdminController } from "./admin.controller.js";
 
@@ -8,7 +9,13 @@ function createController() {
   const walletService = {
     listTransactionsAdmin: mockListTransactionsAdmin,
   } as unknown as WalletService;
-  return new AdminController(walletService);
+  const payoutService = {
+    settlePayout: vi.fn(),
+  } as unknown as PayoutService;
+  const auditLogService = {
+    listForAdmin: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+  };
+  return new AdminController(walletService, payoutService, auditLogService as never);
 }
 
 function createMockResponse() {
@@ -43,7 +50,7 @@ describe("AdminController.listTransactions", () => {
       { query: { limit: "10", page: "0" } } as never,
       res as never,
     );
-    expect(mockListTransactionsAdmin).toHaveBeenCalledWith(0, 10);
+    expect(mockListTransactionsAdmin).toHaveBeenCalledWith(0, 10, undefined);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -54,5 +61,20 @@ describe("AdminController.listTransactions", () => {
         totalPages: 1,
       }),
     );
+  });
+
+  it("przekazuje referenceIdPrefix do serwisu", async () => {
+    mockListTransactionsAdmin.mockResolvedValue({ items: [], total: 0 });
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.listTransactions(
+      {
+        query: { limit: "10", page: "0", referenceIdPrefix: "stx:" },
+      } as never,
+      res as never,
+    );
+    expect(mockListTransactionsAdmin).toHaveBeenCalledWith(0, 10, {
+      referenceIdPrefix: "stx:",
+    });
   });
 });

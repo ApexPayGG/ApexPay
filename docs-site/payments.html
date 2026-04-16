@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Płatności — ApexPay Docs</title>
+    <meta name="description" content="Inicjacja Autopay BM, paymentUrl, ITN webhook SHA-256, przykłady XML." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="payments">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Płatności</span>
+        </nav>
+
+        <h1>Płatności (Autopay BM)</h1>
+        <p class="doc-lead">
+          Endpoint <code class="inline">POST /api/v1/payments/initiate</code> uruchamia płatność redirect w
+          bramce Autopay BM. Wymaga uwierzytelnionego użytkownika (JWT / sesja). Kwoty są w
+          <strong>groszach</strong> (integer).
+        </p>
+
+        <section class="doc-split" aria-labelledby="pay-init">
+          <div class="doc-split__body">
+            <h2 id="pay-init">Inicjacja</h2>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/payments/initiate</span>
+            </div>
+            <p>Body JSON oraz odpowiedź z polem <code class="inline">paymentUrl</code> — po prawej.</p>
+            <p>
+              Przekieruj użytkownika na <code class="inline">paymentUrl</code> (GET). Bramka sandbox:
+              <code class="inline">https://pay-accept.bm.pl</code>, produkcja:
+              <code class="inline">https://pay.bm.pl</code>.
+            </p>
+          </div>
+          <div class="doc-split__rail" aria-label="Body i odpowiedź JSON">
+            <p class="docs-rail__label">Żądanie</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-json">{
+  "amount": 5000,
+  "currency": "PLN",
+  "description": "Doładowanie portfela"
+}</code></pre>
+            </div>
+            <p class="docs-rail__label docs-rail__label--spaced">Odpowiedź</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-json">{
+  "status": "success",
+  "data": {
+    "paymentUrl": "https://pay-accept.bm.pl/...",
+    "orderId": "dep:USER_ID:TIMESTAMP"
+  }
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <h2>Hash przy inicjacji (strona bramki)</h2>
+        <p>
+          Parametry redirect są podpisane przez ApexPay. Łańcuch do SHA-256 (hex, lowercase):
+          <code class="inline">ServiceID|OrderID|Amount|Description|CustomerEmail|SHARED_KEY</code>
+          — zgodnie z konfiguracją środowiska (<code class="inline">AUTOPAY_*</code>).
+        </p>
+
+        <h2>ITN — powiadomienie o płatności</h2>
+        <p>
+          Endpoint wewnętrzny: <code class="inline">POST /internal/webhooks/autopay-itn</code> (formularz
+          URL-encoded). Pole <code class="inline">transactions</code> zawiera <strong>base64(XML)</strong>.
+        </p>
+        <p>
+          Weryfikacja integralności: hash SHA-256 (hex, lowercase) z połączenia pól:
+        </p>
+        <p>
+          <code class="inline">ServiceID|OrderID|RemoteID|Amount|Currency|PaymentStatus|SHARED_KEY</code>
+        </p>
+        <p>
+          Przy poprawnym hashu i statusie sukcesu następuje księgowanie wpłaty; odpowiedź zawsze
+          <strong>200</strong> z treścią XML (<code class="inline">CONFIRMED</code> lub komunikat błędu przy
+          niepoprawnym payloadzie).
+        </p>
+
+        <h3>Przykładowa struktura XML (schemat logiczny)</h3>
+        <div class="code-block">
+          <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+          <pre><code class="language-xml">&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;transaction&gt;
+  &lt;ServiceID&gt;YOUR_SERVICE_ID&lt;/ServiceID&gt;
+  &lt;OrderID&gt;dep:userId:timestamp&lt;/OrderID&gt;
+  &lt;RemoteID&gt;REMOTE_TRANSACTION_ID&lt;/RemoteID&gt;
+  &lt;Amount&gt;5000&lt;/Amount&gt;
+  &lt;Currency&gt;PLN&lt;/Currency&gt;
+  &lt;PaymentStatus&gt;SUCCESS&lt;/PaymentStatus&gt;
+&lt;/transaction&gt;</code></pre>
+        </div>
+
+        <h3>Fragment odpowiedzi potwierdzenia (ITN)</h3>
+        <div class="code-block">
+          <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+          <pre><code class="language-xml">&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;confirmation&gt;
+  &lt;Status&gt;CONFIRMED&lt;/Status&gt;
+&lt;/confirmation&gt;</code></pre>
+        </div>
+
+        <div class="callout callout--info">
+          <strong>Środowisko</strong>
+          Wymagane zmienne: <code class="inline">AUTOPAY_SERVICE_ID</code>,
+          <code class="inline">AUTOPAY_SHARED_KEY</code>, <code class="inline">AUTOPAY_GATEWAY_URL</code>,
+          <code class="inline">AUTOPAY_RETURN_URL</code>, <code class="inline">AUTOPAY_ITN_URL</code>. Szczegóły:
+          <code class="inline">docs/API.md</code> w repozytorium.
+        </div>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

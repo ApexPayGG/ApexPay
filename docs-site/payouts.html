@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wypłaty — ApexPay Docs</title>
+    <meta name="description" content="Tworzenie wypłaty, statusy PENDING–PAID/FAILED, rozliczenie admin." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="payouts">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Wypłaty</span>
+        </nav>
+
+        <h1>Wypłaty (payouts)</h1>
+        <p class="doc-lead">
+          Integrator zleca wypłatę z <strong>portfela użytkownika powiązanego z subkontem</strong>
+          (<code class="inline">ConnectedAccount.userId</code>). Kwoty w JSON jako integer w
+          <strong>groszach</strong>.
+        </p>
+
+        <section class="doc-split" aria-labelledby="payout-create">
+          <div class="doc-split__body">
+            <h2 id="payout-create">Utworzenie wypłaty</h2>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/integrations/payouts</span>
+            </div>
+            <p>
+              Wymagany nagłówek <code class="inline">Idempotency-Key</code>. Przykładowe body JSON — po prawej.
+            </p>
+            <p>
+              Odpowiedź <strong>201</strong> tworzy rekord <code class="inline">Payout</code> ze statusem domyślnym
+              <code class="inline">PENDING</code> oraz wpis outbox <code class="inline">payout.created</code>. Przy
+              niewystarczających środkach na portfelu — <strong>402</strong>.
+            </p>
+          </div>
+          <div class="doc-split__rail" aria-label="Body JSON">
+            <p class="docs-rail__label">Body</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-json">{
+  "amount": 25000,
+  "connectedAccountId": "CONNECTED_ACCOUNT_UUID"
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <h2>Statusy cyklu życia</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Znaczenie</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code class="inline">PENDING</code></td>
+                <td>Utworzono zlecenie; księgowanie debetu (PAYOUT_DEBIT) wykonane przy tworzeniu.</td>
+              </tr>
+              <tr>
+                <td><code class="inline">IN_TRANSIT</code></td>
+                <td>Opcjonalny stan pośredni (np. przekazanie do PSP).</td>
+              </tr>
+              <tr>
+                <td><code class="inline">PAID</code></td>
+                <td>Wypłata zakończona sukcesem po rozliczeniu administracyjnym.</td>
+              </tr>
+              <tr>
+                <td><code class="inline">FAILED</code></td>
+                <td>Niepowodzenie; przy rozliczeniu możliwy zwrot na portfel (PAYOUT_REVERSAL).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <section class="doc-split" aria-labelledby="payout-settle">
+          <div class="doc-split__body">
+            <h2 id="payout-settle">Rozliczenie (admin)</h2>
+            <p>
+              Endpoint <code class="inline">POST /api/v1/admin/payouts/:id/settle</code> (JWT, rola
+              <strong>ADMIN</strong>). Przykładowe body — po prawej.
+            </p>
+            <p>
+              Dla <code class="inline">PAID</code>: aktualizacja statusu, opcjonalnie
+              <code class="inline">pspReferenceId</code>, webhook <code class="inline">payout.paid</code>. Dla
+              <code class="inline">FAILED</code>: status <code class="inline">FAILED</code>, zwrot środków na portfel
+              subkonta, ledger <code class="inline">PAYOUT_REVERSAL</code> z
+              <code class="inline">referenceId</code> <code class="inline">pout-void:{payoutId}</code>, webhook
+              <code class="inline">payout.failed</code>.
+            </p>
+          </div>
+          <div class="doc-split__rail" aria-label="Body settle">
+            <p class="docs-rail__label">Body</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-json">{
+  "status": "PAID",
+  "pspReferenceId": "PSP_REF_OPTIONAL"
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <div class="callout callout--info">
+          <strong>Lista i eksport</strong>
+          <code class="inline">GET /api/v1/integrations/payouts</code> oraz
+          <code class="inline">GET /api/v1/integrations/payouts/export</code> (CSV) — patrz
+          <code class="inline">docs/API.md</code>.
+        </div>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

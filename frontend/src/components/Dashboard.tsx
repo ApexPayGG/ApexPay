@@ -1,6 +1,16 @@
-import { Activity, LogOut, RefreshCcw, Wallet } from "lucide-react";
+import {
+  Activity,
+  ChartColumnIncreasing,
+  Banknote,
+  Building2,
+  KeyRound,
+  LogOut,
+  RefreshCcw,
+  Wallet,
+  Webhook,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiUrl, clearStoredAuthToken } from "../lib/auth-api.js";
 import "./Dashboard.css";
 
@@ -196,6 +206,48 @@ export function Dashboard() {
             <h1>ApexPay</h1>
           </div>
           <div className="dashboard-header__actions">
+            <Link
+              to="/panel/integrator/klucze-api"
+              className="dashboard-header__refresh"
+              title="Zarządzanie kluczami API (integrator B2B)"
+            >
+              <KeyRound size={16} />
+              <span>Klucze API</span>
+            </Link>
+            <Link
+              to="/panel/integrator/webhook"
+              className="dashboard-header__refresh"
+              title="Konfiguracja webhooka B2B"
+            >
+              <Webhook size={16} />
+              <span>Webhook</span>
+            </Link>
+            <Link
+              to="/panel/integrator/accounts"
+              className="dashboard-header__refresh"
+              title="Subkonta (Connected Accounts)"
+            >
+              <Building2 size={16} />
+              <span>Subkonta</span>
+            </Link>
+            <Link
+              to="/panel/integrator/payments"
+              className="dashboard-header__refresh"
+              title="Płatności i wypłaty"
+            >
+              <Banknote size={16} />
+              <span>Płatności</span>
+            </Link>
+            {role === "ADMIN" && (
+              <Link
+                to="/panel/admin/analytics"
+                className="dashboard-header__refresh"
+                title="Analityka admina"
+              >
+                <ChartColumnIncreasing size={16} />
+                <span>Analityka</span>
+              </Link>
+            )}
             {refreshing && <span className="dashboard-header__refreshing">Odświeżanie…</span>}
             <button
               onClick={() => void loadDashboard(true)}

@@ -21,7 +21,9 @@ export function createSlidingWindowRateLimit(redis, options) {
     const { windowMs, maxRequests, keyPrefix, keyFromRequest } = options;
     return (req, res, next) => {
         void run(req, res, next).catch((err) => {
-            next(err);
+            // Redis niedostępny → nie blokuj logowania/rejestracji (wcześniej 500 + „serwer niedostępny”).
+            console.error("[rate-limit] Redis error, failing open:", err);
+            next();
         });
     };
     async function run(req, res, next) {

@@ -109,6 +109,31 @@ Obecny **SAFE TAXI `settle`** jest **uproszczonym split-em** (pasażer → platf
 
 ---
 
+## Dwie ścieżki splitu (Krok 1 — spójność modelu)
+
+**SAFE TAXI** i **Marketplace (ConnectedAccount)** rozwiązują ten sam problem biznesowy (*jeden debit → wiele kredytów*), ale w innym kontekście danych:
+
+| Ścieżka | Kiedy | Encja biznesowa | Idempotencja ledger |
+|---------|--------|-----------------|----------------------|
+| **SAFE TAXI `settleRide`** | Rozliczenie konkretnego przejazdu (`SafeTaxiRide`), prowizja z env | `SafeTaxiRide` + status `SETTLED` | Pierwszy wpis: `referenceId = stx:{rideId}:passenger` (unikalny w `Transaction`) |
+| **Marketplace `chargeSplit`** | Dowolny podział na subkonta `ACTIVE` (sandbox / uogólniony split) | `MarketplaceCharge` + `ConnectedAccount` | Opcjonalnie `MarketplaceCharge.idempotencyKey`; wpisy `mkt:{chargeId}:debit`, `mkt:{chargeId}:credit:{connectedAccountId}` |
+
+**Konwencje `referenceId` (reconciliacja):**
+
+- `stx:{rideId}:passenger` — debit pasażera (`SAFE_TAXI_PASSENGER_CHARGE`)
+- `stx:{rideId}:driver` — kredyt kierowcy (`SAFE_TAXI_DRIVER_PAYOUT`)
+- `stx:{rideId}:platform` — prowizja platformy (`SAFE_TAXI_PLATFORM_FEE`)
+- `mkt:{chargeUuid}:debit` — debit płatnika (`MARKETPLACE_PAYER_DEBIT`)
+- `mkt:{chargeUuid}:credit:{connectedAccountId}` — kredyt odbiorcy (`MARKETPLACE_CONNECTED_CREDIT`)
+
+Sumy: dla przejazdu `fareCents = |passenger| = driver + platform` (wg `splitSafeTaxiFare`). Dla marketplace: suma kredytów = `amountCents` z `MarketplaceCharge`.
+
+**API admina:** `GET .../admin/transactions?referenceIdPrefix=stx:` lub `...Prefix=mkt:` — lista wpisów ledger pod export / kontrolę (JSON; eksport CSV robi klient lub skrypt).
+
+**Kierunek późniejszej unifikacji:** wspólna logika *walidacji splitu i aktualizacji portfeli* może trafić do jednej warstwy serwisowej; do tego czasu **nie** mieszać encji (`SafeTaxiRide` nie jest `MarketplaceCharge`).
+
+---
+
 ## Ryzyka i granice
 
 - **PCI:** dotyk kart wyłącznie przez PSP + tokeny; dokumentacja operacyjna i DPIA pod RODO/PSD2 przy pełnym launchu.

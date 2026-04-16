@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 /* ApexPay — design tokens (grafit + fiolet marki + teal semantyczny) */
 :root {
   color-scheme: dark;
@@ -30,7 +32,8 @@
 
   --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
 
-  --font-sans: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-numeric: "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 *,

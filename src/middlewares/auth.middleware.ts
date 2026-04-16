@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
+import { attachUserToRequestContext } from "../lib/request-context.js";
 
 /** Rozszerzenie typu Request o obiekt użytkownika zdekodowany z tokena */
 export interface AuthRequest extends Request {
@@ -84,6 +85,7 @@ export const authenticateToken = (
       res.status(403).json({ error: MSG_TOKEN_INVALID });
       return;
     }
+    attachUserToRequestContext(req);
     next();
   } catch {
     res.status(403).json({ error: MSG_TOKEN_INVALID });
@@ -111,6 +113,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
       res.status(403).json({ error: MSG_TOKEN_INVALID });
       return;
     }
+    attachUserToRequestContext(req);
     next();
   } catch {
     res.status(403).json({ error: MSG_TOKEN_INVALID });

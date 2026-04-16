@@ -13,6 +13,57 @@ enum UserRole {
   DRIVER
 }
 
+/// Zdarzenia audytowe (append-only — brak aktualizacji rekordów).
+enum AuditAction {
+  CHARGE_CREATED
+  CHARGE_REFUNDED
+  PAYOUT_CREATED
+  PAYOUT_SETTLED
+  PAYOUT_FAILED
+  WALLET_CREDITED
+  WALLET_DEBITED
+  API_KEY_CREATED
+  API_KEY_DELETED
+  CONNECTED_ACCOUNT_CREATED
+  CONNECTED_ACCOUNT_STATUS_CHANGED
+  WEBHOOK_CONFIG_UPDATED
+  ADMIN_LOGIN
+  DISPUTE_CREATED
+  DISPUTE_EVIDENCE_SUBMITTED
+  DISPUTE_RESOLVED
+  FRAUD_FLAGGED
+  FRAUD_BLOCKED
+  FRAUD_REVIEWED
+  WEBHOOK_REQUEUED
+  RIDE_FINALIZED
+}
+
+enum AuditActorType {
+  USER
+  ADMIN
+  SYSTEM
+  PSP
+}
+
+/// Dziennik audytu — niemodyfikowalny (tylko INSERT).
+model AuditLog {
+  id         String          @id @default(cuid())
+  actorId    String?
+  actorType  AuditActorType
+  action     AuditAction
+  entityType String
+  entityId   String
+  metadata   Json
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime        @default(now())
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
 // --- CORE: Autoryzacja i Użytkownik ---
 model User {
   id                   String                  @id @default(cuid())
@@ -31,6 +82,126 @@ model User {
   matchesAsPlayerB     Match[]                 @relation("MatchPlayerB")
   ridesAsPassenger     SafeTaxiRide[]          @relation("RidePassenger")
   ridesAsDriver        SafeTaxiRide[]          @relation("RideDriver")
+  connectedAccountSubject   ConnectedAccount?  @relation("ConnectedAccountSubject")
+  connectedAccountsIntegrated ConnectedAccount[] @relation("ConnectedAccountsByIntegrator")
+  paymentMethods       PaymentMethod[]
+  apiKeys              ApiKey[]
+  integratorConfig     IntegratorConfig?
+  webhookOutboxes      WebhookOutbox[]
+  webhookDeadLetters   WebhookDeadLetter[]
+  tradesSold           Trade[]                 @relation("TradesSold")
+  tradesBought         Trade[]                 @relation("TradesBought")
+}
+
+/// Escrow P2P (przedmiot / kwota / prowizja platformy).
+model Trade {
+  id                String      @id @default(cuid())
+  sellerId          String
+  buyerId           String?
+  itemName          String
+  description       String?
+  amountCents       BigInt
+  platformFeeCents  BigInt      @default(0)
+  status            TradeStatus @default(PENDING_PAYMENT)
+  escrowReferenceId String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  expiresAt         DateTime?
+  completedAt       DateTime?
+  seller            User        @relation("TradesSold", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer             User?       @relation("TradesBought", fields: [buyerId], references: [id], onDelete: SetNull)
+
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([status])
+  @@map("trades")
+}
+
+enum TradeStatus {
+  PENDING_PAYMENT
+  PAID_AWAITING_ITEM
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+// --- Integracje B2B: klucze API (alternatywa do JWT na wybranych trasach) ---
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// bcrypt(pełnego surowego klucza); nigdy nie zwracany w API.
+  keyHash    String    @unique
+  /// Pierwsze znaki surowego klucza (np. `apx_live_` + fragment) — unikalny skrót do wyszukania.
+  prefix     String    @unique
+  name       String
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("api_keys")
+}
+
+/// Konfiguracja webhooków B2B (sekret do weryfikacji podpisów po stronie integratora).
+model IntegratorConfig {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  webhookUrl     String?
+  webhookSecret  String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("integrator_configs")
+}
+
+enum WebhookStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+/// Kolejka wyjściowa webhooków B2B (outbox) — wysyłka asynchroniczna z HMAC.
+model WebhookOutbox {
+  id               String        @id @default(cuid())
+  integratorUserId String
+  integrator       User          @relation(fields: [integratorUserId], references: [id], onDelete: Cascade)
+  eventType        String
+  payload          Json
+  status           WebhookStatus @default(PENDING)
+  attempts         Int           @default(0)
+  nextAttemptAt    DateTime      @default(now())
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@map("webhook_outboxes")
+}
+
+/// Niedostarczone webhooki po wyczerpaniu prób — ręczny requeue z panelu admina.
+model WebhookDeadLetter {
+  id String   @id @default(cuid())
+  integratorUserId  String
+  integrator        User     @relation(fields: [integratorUserId], references: [id], onDelete: Cascade)
+  eventType         String
+  payload           Json
+  attempts          Int
+  lastError         String
+  lastAttemptAt     DateTime
+  /// Id usuniętego wpisu `WebhookOutbox` (ślad dla supportu / audytu).
+  originalOutboxId  String?
+  requeued          Boolean  @default(false)
+  requeuedAt        DateTime?
+  requeuedBy        String?
+  createdAt         DateTime @default(now())
+
+  @@index([integratorUserId, createdAt(sort: Desc)])
+  @@index([requeued, createdAt(sort: Desc)])
+  @@map("webhook_dead_letters")
 }
 
 // --- FINANSE: Portfele i Księga Główna (Ledger) ---
@@ -65,22 +236,264 @@ enum TransactionType {
   ESCROW_HOLD   // Blokada środków na wpisowe
   PRIZE_PAYOUT  // Wypłata nagrody
   REFUND
+  REFUND_DEBIT   // Źródło kosztu zwrotu marketplace (wielowariantowo SPLIT / PLATFORM / CA)
+  REFUND_CREDIT  // Kredyt płatnika (integrator) przy zwrocie charge
   SAFE_TAXI_PASSENGER_CHARGE
   SAFE_TAXI_DRIVER_PAYOUT
   SAFE_TAXI_PLATFORM_FEE
+  MARKETPLACE_PAYER_DEBIT
+  MARKETPLACE_CONNECTED_CREDIT
+  PAYOUT_DEBIT     // Wypłata B2B ze subkonta (debet portfela beneficjenta)
+  PAYOUT_REVERSAL  // Zwrot po nieudanym rozliczeniu wypłaty (kredyt portfela)
+  CASH_COMMISSION_FEE          // legacy (gotówka); preferuj SAFE_TAXI_COMMISSION_DEBIT
+  SAFE_TAXI_COMMISSION_DEBIT    // SAFE TAXI gotówka: prowizja (debet kierowcy / kredyt platformy w parze)
+  DISPUTE_HOLD           // Zamrożenie kwoty sporu (debet portfela integratora)
+  DISPUTE_HOLD_RELEASE   // Zwrot po wygranej / przed finalnym obciążeniem przy przegranej
+  DISPUTE_DEBIT_FINAL    // Ostateczna utrata przy przegranej / akceptacji (po zwolnieniu holdu w tej samej transakcji)
+  TIP_CREDIT             // Napiwek dla kierowcy (ride finalize)
+  TRADE_ESCROW_HOLD      // Escrow P2P: blokada środków u kupującego
+  TRADE_SELLER_CREDIT    // Escrow P2P: wypłata netto sprzedawcy po potwierdzeniu
+  TRADE_PLATFORM_FEE     // Escrow P2P: prowizja platformy po zakończeniu
+}
+
+// --- Marketplace (subkonta / split payment) ---
+model ConnectedAccount {
+  id               String   @id @default(cuid())
+  integratorUserId String
+  integrator       User     @relation("ConnectedAccountsByIntegrator", fields: [integratorUserId], references: [id], onDelete: Cascade)
+
+  /// Użytkownik ApexPay po KYC / portfel; null dopóki brak linku.
+  userId      String? @unique
+  subjectUser User?   @relation("ConnectedAccountSubject", fields: [userId], references: [id], onDelete: SetNull)
+
+  email       String
+  subjectType ConnectedAccountSubjectType
+  country     String   @db.Char(2)
+
+  status         ConnectedAccountStatus @default(PENDING)
+  kycReferenceId String?                @unique
+
+  payouts Payout[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([integratorUserId, email])
+  @@index([integratorUserId, status])
+  @@map("connected_accounts")
+}
+
+enum PayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+}
+
+model Payout {
+  id                 String        @id @default(cuid())
+  connectedAccountId String
+  connectedAccount   ConnectedAccount @relation(fields: [connectedAccountId], references: [id], onDelete: Restrict)
+  amount             BigInt
+  currency           String        @default("PLN")
+  status             PayoutStatus  @default(PENDING)
+  pspReferenceId     String?
+  fraudCheckId       String?       @unique
+  fraudCheck         FraudCheck?   @relation(fields: [fraudCheckId], references: [id], onDelete: SetNull)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([connectedAccountId, createdAt(sort: Desc)])
+  @@map("payouts")
+}
+
+enum ConnectedAccountSubjectType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum ConnectedAccountStatus {
+  PENDING
+  ACTIVE
+  RESTRICTED
+  REJECTED
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// Kto ponosi koszt zwrotu (hybryda B2B).
+enum RefundCoveredBy {
+  PLATFORM
+  CONNECTED_ACCOUNT
+  SPLIT
+}
+
+enum FraudCheckStatus {
+  PASSED
+  FLAGGED
+  BLOCKED
+}
+
+enum FraudRuleTriggered {
+  VELOCITY_CHARGE
+  VELOCITY_PAYOUT
+  UNUSUAL_AMOUNT
+  DUPLICATE_CHARGE
+  CARD_TESTING
+  ACCOUNT_AGE_TOO_LOW
+  REFUND_RATE_TOO_HIGH
+  PAYOUT_SPIKE
+}
+
+/// Wynik synchronicznej oceny ryzyka (reguły + scoring).
+model FraudCheck {
+  id             String           @id @default(cuid())
+  entityType     String
+  entityId       String?
+  userId         String
+  score          Int
+  status         FraudCheckStatus
+  rulesTriggered Json
+  metadata       Json?
+  reviewedBy     String?
+  reviewedAt     DateTime?
+  createdAt      DateTime         @default(now())
+
+  marketplaceCharge MarketplaceCharge?
+  payout            Payout?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("fraud_checks")
+}
+
+model MarketplaceCharge {
+  id               String   @id @default(cuid())
+  debitUserId      String
+  /// Integrator / autor charge (B2B); przy charge z admina zwykle = debitUserId.
+  integratorUserId String
+  amountCents      BigInt
+  currency         String   @default("PLN")
+  idempotencyKey   String?  @unique
+  fraudCheckId     String?  @unique
+  fraudCheck       FraudCheck? @relation(fields: [fraudCheckId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+
+  refunds  Refund[]
+  disputes Dispute[]
+
+  @@index([debitUserId, createdAt(sort: Desc)])
+  @@index([integratorUserId, createdAt(sort: Desc)])
+  @@map("marketplace_charges")
+}
+
+enum DisputeStatus {
+  RECEIVED
+  UNDER_REVIEW
+  EVIDENCE_SUBMITTED
+  WON
+  LOST
+  ACCEPTED
+}
+
+enum DisputeReason {
+  FRAUDULENT
+  DUPLICATE
+  PRODUCT_NOT_RECEIVED
+  PRODUCT_UNACCEPTABLE
+  UNRECOGNIZED
+  CREDIT_NOT_PROCESSED
+  GENERAL
+}
+
+/// Spór / chargeback zgłoszony przez PSP (B2B integrator).
+model Dispute {
+  id           String         @id @default(cuid())
+  chargeId     String
+  charge       MarketplaceCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  pspDisputeId String         @unique
+  status       DisputeStatus  @default(RECEIVED)
+  reason       DisputeReason
+  amount       BigInt
+  currency     String
+  evidenceDueBy DateTime
+  evidence     Json?
+  resolvedAt   DateTime?
+  integratorNotifiedAt DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([chargeId])
+  @@index([status, evidenceDueBy])
+  @@map("disputes")
+}
+
+/// Zwrot częściowy/pełny do charge integracyjnego — ledger + outbox + audyt.
+model Refund {
+  id             String            @id @default(cuid())
+  chargeId       String
+  charge         MarketplaceCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  amount         BigInt
+  currency       String
+  status         RefundStatus      @default(PENDING)
+  coveredBy      RefundCoveredBy
+  reason         String?
+  initiatedBy    String
+  metadata       Json?
+  idempotencyKey String?           @unique
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([chargeId, createdAt(sort: Desc)])
+  @@map("refunds")
+}
+
+// --- PSP: tokeny metod płatności (bez PAN — tylko referencje od dostawcy) ---
+enum PaymentMethodProvider {
+  STRIPE
+  ADYEN
+  MOCK_PSP
+  AUTOPAY
+}
+
+model PaymentMethod {
+  id        String                @id @default(cuid())
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider  PaymentMethodProvider
+  /// Identyfikator metody płatności u PSP (np. pm_…); nie przechowujemy PAN.
+  token     String
+  last4     String?
+  expMonth  Int?
+  expYear   Int?
+  /// Np. CARD, BLIK, APPLE_PAY — rozszerzalne bez migracji enum.
+  type      String
+  isDefault Boolean               @default(false)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@unique([provider, token])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("payment_methods")
 }
 
 // --- SAFE TAXI: przejazd + rozliczenie (pasażer → platforma + kierowca) ---
 model SafeTaxiRide {
-  id                     String             @id @default(cuid())
-  passengerId            String
-  driverId               String
-  status                 SafeTaxiRideStatus @default(CREATED)
-  fareCents              BigInt?
+  id                      String              @id @default(cuid())
+  passengerId             String
+  driverId                String
+  paymentMethod           RidePaymentMethod   @default(CARD)
+  status                  SafeTaxiRideStatus  @default(CREATED)
+  fareCents               BigInt?
   platformCommissionCents BigInt?
-  driverPayoutCents      BigInt?
-  settledAt              DateTime?
-  createdAt              DateTime           @default(now())
+  driverPayoutCents       BigInt?
+  settledAt               DateTime?
+  createdAt               DateTime            @default(now())
 
   passenger User @relation("RidePassenger", fields: [passengerId], references: [id])
   driver    User @relation("RideDriver", fields: [driverId], references: [id])
@@ -88,6 +501,11 @@ model SafeTaxiRide {
   @@index([passengerId, createdAt(sort: Desc)])
   @@index([driverId, status])
   @@map("safe_taxi_rides")
+}
+
+enum RidePaymentMethod {
+  CARD
+  CASH
 }
 
 enum SafeTaxiRideStatus {

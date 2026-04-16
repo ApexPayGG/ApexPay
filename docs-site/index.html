@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quickstart — ApexPay Docs</title>
+    <meta
+      name="description"
+      content="ApexPay — szybki start integracji: klucz API, subkonto, pierwszy marketplace charge."
+    />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="index">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">
+          ☰
+        </button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+      <div class="top-bar__actions"></div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Quickstart</span>
+        </nav>
+
+        <h1>Quickstart</h1>
+        <p class="doc-lead">
+          <strong>ApexPay</strong> to API do portfeli, rozliczeń marketplace (split na subkontach), płatności
+          redirect (Autopay BM), wypłat i webhooków B2B. Bazowy URL produkcji:
+          <code class="inline">https://api.apexpay.pl</code> — endpointy są dostępne pod
+          <code class="inline">/api/v1/...</code>.
+        </p>
+
+        <p>
+          Trzy minimalne kroki do pierwszej transakcji marketplace: wygeneruj klucz API, utwórz subkonto
+          (Connected Account), zainicjuj charge ze splitem. Po prawej — gotowe wywołania
+          <code class="inline">curl</code>.
+        </p>
+
+        <section class="doc-split" aria-labelledby="step1">
+          <div class="doc-split__body">
+            <h2 id="step1">Krok 1 — wygeneruj klucz API</h2>
+            <p>
+              Zaloguj się do panelu (JWT), a następnie utwórz klucz integracyjny. Pełny sekret
+              <code class="inline">apx_live_...</code> zwracany jest <strong>tylko raz</strong> — zapisz go w
+              menedżerze sekretów.
+            </p>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/api-keys</span>
+            </div>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykład curl">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-bash">curl -sS -X POST "https://api.apexpay.pl/api/v1/api-keys" \
+  -H "Authorization: Bearer YOUR_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Sandbox integrator"}'</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="doc-split" aria-labelledby="step2">
+          <div class="doc-split__body">
+            <h2 id="step2">Krok 2 — utwórz subkonto (Connected Account)</h2>
+            <p>
+              Onboarding KYC dla beneficjenta: body zawiera e-mail, typ (<code class="inline">INDIVIDUAL</code> /
+              <code class="inline">COMPANY</code>) i kraj. Odpowiedź zawiera identyfikator subkonta — użyj go w
+              splitach charge.
+            </p>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/integrations/accounts</span>
+            </div>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykład curl">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-bash">curl -sS -X POST "https://api.apexpay.pl/api/v1/integrations/accounts" \
+  -H "x-api-key: apx_live_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "seller@example.com",
+    "type": "INDIVIDUAL",
+    "country": "PL"
+  }'</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="doc-split" aria-labelledby="step3">
+          <div class="doc-split__body">
+            <h2 id="step3">Krok 3 — zainicjuj charge ze splitem</h2>
+            <p>
+              Marketplace charge obciąża portfel integratora pełną kwotą i rozdziela środki na subkonta zgodnie z
+              tablicą <code class="inline">splits</code>. Wymagany nagłówek
+              <code class="inline">Idempotency-Key</code>.
+            </p>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/integrations/charges</span>
+            </div>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykład curl">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-bash">curl -sS -X POST "https://api.apexpay.pl/api/v1/integrations/charges" \
+  -H "x-api-key: apx_live_YOUR_KEY" \
+  -H "Idempotency-Key: charge-demo-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 10000,
+    "currency": "PLN",
+    "splits": [
+      { "connectedAccountId": "CONNECTED_ACCOUNT_UUID_A", "amount": 7000 },
+      { "connectedAccountId": "CONNECTED_ACCOUNT_UUID_B", "amount": 2000 }
+    ]
+  }'</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <div class="callout callout--info">
+          <strong>Dalej</strong>
+          Skonfiguruj <a href="webhooks.html">webhook URL</a> i sekret w
+          <code class="inline">GET/PUT /api/v1/integrations/config</code>, aby otrzymywać zdarzenia
+          <code class="inline">charge.succeeded</code>.
+        </div>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

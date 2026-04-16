@@ -222,6 +222,61 @@ describe("WalletService.depositFunds", () => {
   });
 });
 
+describe("WalletService.depositFundsPspWebhook", () => {
+  let prisma: {
+    $transaction: ReturnType<typeof vi.fn>;
+  };
+  let service: WalletService;
+  let lastTx: TxMock;
+
+  beforeEach(() => {
+    lastTx = createTxMock();
+    prisma = {
+      $transaction: vi.fn(async (fn: (tx: TxMock) => Promise<unknown>) => fn(lastTx)),
+    };
+    service = new WalletService(prisma as unknown as PrismaClient);
+  });
+
+  it("tworzy DEPOSIT z referenceId dep:{pspRefId} i izolacją Serializable", async () => {
+    lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_1" });
+    const created = {
+      id: "txn_dep_psp",
+      walletId: "wal_1",
+      amount: 100n,
+      referenceId: "dep:ref_psp_1",
+      type: "DEPOSIT",
+      createdAt: new Date("2026-06-01T12:00:00.000Z"),
+    };
+    lastTx.transaction.create.mockResolvedValue(created);
+
+    const result = await service.depositFundsPspWebhook("usr_x", 100n, "ref_psp_1");
+
+    expect(lastTx.transaction.findFirst).toHaveBeenCalledWith({
+      where: { referenceId: "dep:ref_psp_1" },
+    });
+    expect(lastTx.wallet.update).toHaveBeenCalledWith({
+      where: { userId: "usr_x" },
+      data: { balance: { increment: 100n } },
+    });
+    expect(result).toEqual({ transaction: created, created: true });
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      }),
+    );
+  });
+
+  it("rzuca WalletNotFoundError gdy brak portfela", async () => {
+    lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValue(null);
+    await expect(service.depositFundsPspWebhook("missing", 1n, "r1")).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+  });
+});
+
 describe("WalletService.fundWalletAtomic", () => {
   let prisma: { $transaction: ReturnType<typeof vi.fn> };
   let service: WalletService;
@@ -400,14 +455,36 @@ describe("WalletService.listTransactionsAdmin", () => {
     const service = new WalletService(prisma as unknown as PrismaClient);
     const out = await service.listTransactionsAdmin(5, 10);
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 5, take: 10 }),
+      expect.objectContaining({ skip: 5, take: 10, where: {} }),
     );
+    expect(prisma.transaction.count).toHaveBeenCalledWith({ where: {} });
     expect(out.total).toBe(42);
     expect(out.items[0]).toMatchObject({
       id: "t1",
       amount: "99",
       referenceId: "ref-a",
       walletUserId: "usr_z",
+    });
+  });
+
+  it("filtruje po referenceIdPrefix", async () => {
+    const prisma = {
+      transaction: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
+    };
+    const service = new WalletService(prisma as unknown as PrismaClient);
+    await service.listTransactionsAdmin(0, 20, { referenceIdPrefix: "mkt:" });
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { referenceId: { startsWith: "mkt:" } },
+        skip: 0,
+        take: 20,
+      }),
+    );
+    expect(prisma.transaction.count).toHaveBeenCalledWith({
+      where: { referenceId: { startsWith: "mkt:" } },
     });
   });
 });

@@ -1,0 +1,48 @@
+# Ręczne lub cotygodniowe testy obciążeniowe k6 przeciwko środowisku staging.
+# Wymaga sekretów: LOAD_TEST_BASE_URL, LOAD_TEST_AUTOPAY_SERVICE_ID, LOAD_TEST_AUTOPAY_SHARED_KEY,
+# LOAD_TEST_ADMIN_EMAIL, LOAD_TEST_ADMIN_PASSWORD
+name: Load test (k6)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1" # poniedziałek 04:00 UTC
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run all scenarios (staging)
+        env:
+          BASE_URL: ${{ secrets.LOAD_TEST_BASE_URL }}
+          AUTOPAY_SERVICE_ID: ${{ secrets.LOAD_TEST_AUTOPAY_SERVICE_ID }}
+          AUTOPAY_SHARED_KEY: ${{ secrets.LOAD_TEST_AUTOPAY_SHARED_KEY }}
+          LOAD_ADMIN_EMAIL: ${{ secrets.LOAD_TEST_ADMIN_EMAIL }}
+          LOAD_ADMIN_PASSWORD: ${{ secrets.LOAD_TEST_ADMIN_PASSWORD }}
+        run: |
+          if [ -z "$BASE_URL" ] || [ -z "$AUTOPAY_SERVICE_ID" ] || [ -z "$AUTOPAY_SHARED_KEY" ]; then
+            echo "Brak sekretów LOAD_TEST_* — skonfiguruj secrets w repozytorium."
+            exit 1
+          fi
+          bash load-tests/run.sh
+
+      - name: Upload k6 JSON results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: load-tests/results/*.json
+          if-no-files-found: ignore

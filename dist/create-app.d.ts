@@ -10,6 +10,11 @@ export type CreateAppOptions = {
     wsService?: WebSocketService;
     /** Override for tests; defaults to `new MatchSettlementService(prisma)`. */
     matchSettlementService?: Pick<MatchSettlementService, "settleDisputedMatch">;
+    /**
+     * Wywoływane po udanym commicie transakcji zapisującej WebhookOutbox (poza `$transaction`).
+     * Np. publikacja `{ outboxId }` do RabbitMQ.
+     */
+    webhookPublish?: (outboxId: string) => Promise<void>;
 };
 export declare function createApp(options: CreateAppOptions): {
     app: ReturnType<typeof express>;

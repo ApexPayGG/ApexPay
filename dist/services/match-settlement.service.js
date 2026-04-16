@@ -1,5 +1,6 @@
 import { Prisma, TransactionType } from "@prisma/client";
 import { matchResolutionDurationSeconds } from "../monitoring/metrics.js";
+import { TournamentBracketService } from "./tournament-bracket.service.js";
 const PLATFORM_FEE_PERCENT = 10n;
 const ORGANIZER_CUT_PERCENT = 50n;
 const MAX_DEADLOCK_RETRIES = 3;
@@ -13,8 +14,11 @@ export class MatchSettlementError extends Error {
 }
 export class MatchSettlementService {
     prisma;
-    constructor(prisma) {
+    bracketService;
+    constructor(prisma, bracketService) {
         this.prisma = prisma;
+        this.bracketService =
+            bracketService ?? new TournamentBracketService(prisma);
     }
     async settleDisputedMatch(input) {
         const { matchId, finalWinnerId } = input;
@@ -64,76 +68,82 @@ export class MatchSettlementService {
                             ? (platformTotalFee * ORGANIZER_CUT_PERCENT) / 100n
                             : 0n;
                         const winnerPayout = totalPool > platformTotalFee ? totalPool - platformTotalFee : 0n;
-                        const winnerWallet = await tx.wallet.findUnique({
-                            where: { userId: finalWinnerId },
-                        });
-                        if (!winnerWallet) {
-                            throw new Error("CRITICAL: Zwycięzca nie ma portfela.");
-                        }
-                        if (winnerPayout > 0n) {
-                            await tx.wallet.update({
-                                where: { id: winnerWallet.id },
-                                data: { balance: { increment: winnerPayout } },
+                        let prizePaid = false;
+                        if (match.awardsTournamentPrize) {
+                            const winnerWallet = await tx.wallet.findUnique({
+                                where: { userId: finalWinnerId },
                             });
-                            await tx.transaction.create({
-                                data: {
-                                    amount: winnerPayout,
-                                    referenceId: `payout_win_v1_${matchId}`,
-                                    type: TransactionType.PRIZE_PAYOUT,
-                                    walletId: winnerWallet.id,
-                                },
-                            });
-                        }
-                        if (organizerCut > 0n && t.organizer.wallet) {
-                            await tx.wallet.update({
-                                where: { id: t.organizer.wallet.id },
-                                data: { balance: { increment: organizerCut } },
-                            });
-                            await tx.transaction.create({
-                                data: {
-                                    amount: organizerCut,
-                                    referenceId: `payout_org_v1_${matchId}`,
-                                    type: TransactionType.PRIZE_PAYOUT,
-                                    walletId: t.organizer.wallet.id,
-                                },
-                            });
-                        }
-                        await tx.userBalanceLedger.create({
-                            data: {
-                                userId: finalWinnerId,
-                                matchId,
-                                amountDelta: winnerPayout,
-                            },
-                        });
-                        if (organizerCut > 0n && t.organizer.wallet) {
+                            if (!winnerWallet) {
+                                throw new Error("CRITICAL: Zwycięzca nie ma portfela.");
+                            }
+                            if (winnerPayout > 0n) {
+                                await tx.wallet.update({
+                                    where: { id: winnerWallet.id },
+                                    data: { balance: { increment: winnerPayout } },
+                                });
+                                await tx.transaction.create({
+                                    data: {
+                                        amount: winnerPayout,
+                                        referenceId: `payout_win_v1_${matchId}`,
+                                        type: TransactionType.PRIZE_PAYOUT,
+                                        walletId: winnerWallet.id,
+                                    },
+                                });
+                                prizePaid = true;
+                            }
+                            if (organizerCut > 0n && t.organizer.wallet) {
+                                await tx.wallet.update({
+                                    where: { id: t.organizer.wallet.id },
+                                    data: { balance: { increment: organizerCut } },
+                                });
+                                await tx.transaction.create({
+                                    data: {
+                                        amount: organizerCut,
+                                        referenceId: `payout_org_v1_${matchId}`,
+                                        type: TransactionType.PRIZE_PAYOUT,
+                                        walletId: t.organizer.wallet.id,
+                                    },
+                                });
+                            }
                             await tx.userBalanceLedger.create({
                                 data: {
-                                    userId: t.organizer.id,
+                                    userId: finalWinnerId,
                                     matchId,
-                                    amountDelta: organizerCut,
+                                    amountDelta: winnerPayout,
+                                },
+                            });
+                            if (organizerCut > 0n && t.organizer.wallet) {
+                                await tx.userBalanceLedger.create({
+                                    data: {
+                                        userId: t.organizer.id,
+                                        matchId,
+                                        amountDelta: organizerCut,
+                                    },
+                                });
+                            }
+                            await tx.outboxEvent.create({
+                                data: {
+                                    eventType: "FUNDS_SETTLED",
+                                    payload: {
+                                        matchId,
+                                        winnerId: finalWinnerId,
+                                        winnerPayout: winnerPayout.toString(),
+                                        organizerCut: organizerCut.toString(),
+                                        platformFeeTotal: platformTotalFee.toString(),
+                                    },
                                 },
                             });
                         }
-                        await tx.outboxEvent.create({
-                            data: {
-                                eventType: "FUNDS_SETTLED",
-                                payload: {
-                                    matchId,
-                                    winnerId: finalWinnerId,
-                                    winnerPayout: winnerPayout.toString(),
-                                    organizerCut: organizerCut.toString(),
-                                    platformFeeTotal: platformTotalFee.toString(),
-                                },
-                            },
-                        });
                         await tx.match.update({
                             where: { id: matchId },
                             data: { status: "SETTLED", winnerId: finalWinnerId },
                         });
+                        await this.bracketService.advanceAfterTerminalMatch(match.tournamentId, tx);
                         return {
                             matchId,
                             status: "SETTLED",
                             winnerId: finalWinnerId,
+                            prizePaid,
                         };
                     }, {
                         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

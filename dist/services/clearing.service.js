@@ -6,6 +6,9 @@ export class ClearingService {
     }
     PLATFORM_FEE_PERCENT = 10n;
     ORGANIZER_CUT_PERCENT = 50n;
+    /**
+     * @returns true jeśli wykonano wypłatę nagrody (mecz z `awardsTournamentPrize`).
+     */
     async processPayout(matchId, winnerId, tx) {
         const match = await tx.match.findUnique({
             where: { id: matchId },
@@ -21,11 +24,14 @@ export class ClearingService {
         if (!match || !match.tournament) {
             throw new Error("CRITICAL: Brak danych do rozliczenia.");
         }
+        if (!match.awardsTournamentPrize) {
+            return false;
+        }
         const t = match.tournament;
         const participantsCount = BigInt(t.participants.length);
         const totalPool = t.entryFee * participantsCount;
         if (totalPool === 0n) {
-            return;
+            return true;
         }
         const platformTotalFee = (totalPool * this.PLATFORM_FEE_PERCENT) / 100n;
         const organizerCut = (platformTotalFee * this.ORGANIZER_CUT_PERCENT) / 100n;
@@ -60,6 +66,7 @@ export class ClearingService {
                 },
             });
         }
+        return true;
     }
 }
 //# sourceMappingURL=clearing.service.js.map

@@ -74,13 +74,16 @@ services:
     logging: *json-file-rotating
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:3-management-alpine
     profiles: ["selfhosted"]
     networks:
       - apexpay_prod_network
+    ports:
+      # AMQP 5672 tylko w sieci Docker (API: host rabbitmq). Panel UI — wyłącznie localhost na hoście.
+      - "127.0.0.1:15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?set RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?set RABBITMQ_DEFAULT_PASS}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -189,6 +192,30 @@ services:
       - traefik.http.middlewares.web-security.headers.stsPreload=true
       - traefik.http.routers.web.middlewares=web-security
     restart: unless-stopped
+    logging: *json-file-rotating
+
+  skillgaming-web:
+    image: ${SKILLGAMING_WEB_IMAGE:-skillgaming-web:latest}
+    restart: unless-stopped
+    networks:
+      - apexpay_prod_network
+    expose:
+      - "80"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=apexpay_prod_network
+      - "traefik.http.routers.skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`)"
+      - traefik.http.routers.skillgaming.entrypoints=websecure
+      - traefik.http.routers.skillgaming.tls.certresolver=letsencrypt
+      - traefik.http.services.skillgaming.loadbalancer.server.port=80
+      - traefik.http.middlewares.skillgaming-security.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.skillgaming-security.headers.browserXssFilter=true
+      - traefik.http.middlewares.skillgaming-security.headers.referrerPolicy=strict-origin-when-cross-origin
+      - traefik.http.middlewares.skillgaming-security.headers.forceSTSHeader=true
+      - traefik.http.middlewares.skillgaming-security.headers.stsSeconds=31536000
+      - traefik.http.middlewares.skillgaming-security.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.skillgaming-security.headers.stsPreload=true
+      - traefik.http.routers.skillgaming.middlewares=skillgaming-security
     logging: *json-file-rotating
 
 volumes:

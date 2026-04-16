@@ -1,5 +1,23 @@
-# Wdrożenie produkcyjne ApexPay: uruchamiane TYLKO po zielonym CI na main (ten sam commit co testy).
-# Build obrazu multi-stage → GHCR → SSH + docker compose na serwerze.
+# Wdrożenie produkcyjne ApexPay: uruchamiane po pomyślnym zakończeniu workflow „CI” na gałęzi `main`
+# (ten sam commit SHA co przetestowany w CI).
+#
+# Wymagane sekrety repozytorium (Settings → Secrets and variables → Actions):
+#   HOST          — hostname lub IP VPS
+#   USERNAME      — użytkownik SSH
+#   SSH_PRIVATE_KEY — klucz prywatny SSH (PEM), bez hasła lub z ssh-agent w innym flow
+#   SLACK_WEBHOOK_URL — opcjonalnie, powiadomienia
+# Dla obrazu skillgaming-web nie dodajesz nowych sekretów — te same HOST, USERNAME, SSH_PRIVATE_KEY.
+#
+# Na VPS plik /opt/apexpay-api/.env.prod musi być aktualny (nie jest kopiowany z repo). Min.:
+#   DATABASE_URL, JWT_SECRET, REDIS_URL, RABBITMQ_URL, API_DOMAIN, APP_DOMAIN, ACME_EMAIL,
+#   SKILLGAMING_APP_DOMAIN (np. app.apexpay.pl), CORS_ORIGIN z originem app (przecinek),
+#   APEXPAY_API_IMAGE / APEXPAY_WEB_IMAGE / SKILLGAMING_WEB_IMAGE — obrazy API/WEB/SKILLGAMING
+#   nadpisywane w skrypcie deploy (:SHA z tego wdrożenia).
+# Przy stacku self-hosted (--profile selfhosted) dołóż m.in. POSTGRES_*, RABBITMQ_DEFAULT_USER,
+# RABBITMQ_DEFAULT_PASS (nazwy jak w docker-compose.prod.yml). Nie trzeba dodawać tych haseł
+# jako sekretów GitHub, o ile utrzymujesz .env.prod tylko na serwerze; po rotacji sekretów
+# zaktualizuj .env.prod i ponów deploy (patrz docs/operations/SECRETS_ROTATION.md).
+#
 name: Deploy production
 
 on:
@@ -25,21 +43,36 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     outputs:
-      image: ${{ steps.meta.outputs.image }}
-      web_image: ${{ steps.meta.outputs.web_image }}
+      image_base: ${{ steps.meta.outputs.image_base }}
+      web_image_base: ${{ steps.meta.outputs.web_image_base }}
+      deploy_sha: ${{ steps.meta.outputs.sha }}
     steps:
+      - name: Log workflow_run (diagnostyka)
+        run: |
+          echo "[deploy-production] workflow_run.name=${{ github.event.workflow_run.name }}"
+          echo "[deploy-production] conclusion=${{ github.event.workflow_run.conclusion }}"
+          echo "[deploy-production] head_branch=${{ github.event.workflow_run.head_branch }}"
+          echo "[deploy-production] head_sha=${{ github.event.workflow_run.head_sha }}"
+          echo "[deploy-production] html_url=${{ github.event.workflow_run.html_url }}"
+
       - name: Checkout (commit z zakończonego CI)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Image name (GHCR, lowercase)
+      - name: Metadane obrazów (GHCR, lowercase) + SHA
         id: meta
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "image=ghcr.io/${REPO_LOWER}/apexpay-api:latest" >> "$GITHUB_OUTPUT"
-          echo "web_image=ghcr.io/${REPO_LOWER}/apexpay-web:latest" >> "$GITHUB_OUTPUT"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "repo_lower=${REPO_LOWER}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_base=ghcr.io/${REPO_LOWER}/apexpay-api" >> "$GITHUB_OUTPUT"
+          echo "web_image_base=ghcr.io/${REPO_LOWER}/apexpay-web" >> "$GITHUB_OUTPUT"
+          echo "skillgaming_image_base=ghcr.io/${REPO_LOWER}/skillgaming-web" >> "$GITHUB_OUTPUT"
+          echo "[deploy-production] Obrazy: apexpay-api, apexpay-web, skillgaming-web — tagi latest i ${SHA}"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -48,35 +81,62 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push API image (latest + SHA)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.image }}
+          tags: |
+            ${{ steps.meta.outputs.image_base }}:latest
+            ${{ steps.meta.outputs.image_base }}:${{ steps.meta.outputs.sha }}
+          provenance: false
 
       # VITE_API_URL: puste = względne /api na tym samym hoście (zalecane). Jeśli ustawiasz URL — tylko origin,
       # np. https://apexpay.pl (bez /login). Ścieżka w zmiennej daje błędne .../login/api/v1/... → HTML.
-      - name: Build and push web image
+      - name: Build and push web image (latest + SHA)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile.web
           push: true
-          tags: ${{ steps.meta.outputs.web_image }}
+          tags: |
+            ${{ steps.meta.outputs.web_image_base }}:latest
+            ${{ steps.meta.outputs.web_image_base }}:${{ steps.meta.outputs.sha }}
+          provenance: false
           build-args: |
             VITE_API_URL=${{ vars.VITE_API_URL }}
+
+      - name: Build and push skillgaming-web (latest + SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gaming
+          file: ./gaming/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.skillgaming_image_base }}:latest
+            ${{ steps.meta.outputs.skillgaming_image_base }}:${{ steps.meta.outputs.sha }}
+          provenance: false
+
+      - name: Podsumowanie push
+        run: |
+          echo "[deploy-production] Wypchnięto tagi latest oraz ${{ steps.meta.outputs.sha }} dla API, WEB i skillgaming-web."
 
   deploy:
     name: Deploy
     needs: build-push
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout (ten sam commit co build — compose zgodny z obrazami)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Log deploy context
+        run: |
+          echo "[deploy-production] Wgrywam docker-compose.prod.yml → ${{ secrets.HOST }}:/opt/apexpay-api/"
+          echo "[deploy-production] Obrazy na serwerze: :${{ needs.build-push.outputs.deploy_sha }} (immutable) + latest w registry"
 
       - name: Wgraj docker-compose.prod.yml na VPS
         uses: appleboy/scp-action@v0.1.7
@@ -87,44 +147,94 @@ jobs:
           source: docker-compose.prod.yml
           target: /opt/apexpay-api/
 
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@master
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USERNAME: ${{ github.actor }}
+      - name: Wgraj gaming/Dockerfile na VPS
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: GHCR_TOKEN,GHCR_USERNAME
+          source: gaming/Dockerfile
+          target: /opt/apexpay-api/gaming/
+
+      - name: Wgraj gaming/nginx.conf na VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: gaming/nginx.conf
+          target: /opt/apexpay-api/gaming/
+
+      - name: Deploy over SSH (pull + up --remove-orphans)
+        uses: appleboy/ssh-action@v1.2.4
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+          DEPLOY_SHA: ${{ needs.build-push.outputs.deploy_sha }}
+          REPO_FULL: ${{ github.repository }}
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: GHCR_TOKEN,GHCR_USERNAME,DEPLOY_SHA,REPO_FULL
+          command_timeout: 20m
           script: |
             set -euo pipefail
+            echo "[deploy] Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             cd /opt/apexpay-api
-            REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-            export APEXPAY_API_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-api:latest"
-            export APEXPAY_WEB_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-web:latest"
+            echo "[deploy] katalog: $(pwd)"
+
+            if [ ! -f docker-compose.prod.yml ]; then
+              echo "[deploy] BŁĄD: brak docker-compose.prod.yml w $(pwd)"
+              exit 1
+            fi
+
+            if [ ! -f .env.prod ]; then
+              echo "[deploy] OSTRZEŻENIE: brak .env.prod — compose może nie mieć wymaganych zmiennych (DATABASE_URL, RABBITMQ_URL, …)."
+            else
+              echo "[deploy] Znaleziono .env.prod (rozmiar $(wc -c < .env.prod) bajtów)."
+            fi
+
+            REPO_LOWER=$(echo "$REPO_FULL" | tr '[:upper:]' '[:lower:]')
+            export APEXPAY_API_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-api:${DEPLOY_SHA}"
+            export APEXPAY_WEB_IMAGE="ghcr.io/${REPO_LOWER}/apexpay-web:${DEPLOY_SHA}"
+            export SKILLGAMING_WEB_IMAGE="ghcr.io/${REPO_LOWER}/skillgaming-web:${DEPLOY_SHA}"
+            echo "[deploy] APEXPAY_API_IMAGE=${APEXPAY_API_IMAGE}"
+            echo "[deploy] APEXPAY_WEB_IMAGE=${APEXPAY_WEB_IMAGE}"
+            echo "[deploy] SKILLGAMING_WEB_IMAGE=${SKILLGAMING_WEB_IMAGE}"
+
+            echo "[deploy] Logowanie do ghcr.io…"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            echo "[deploy] Zalogowano do GHCR."
+
             COMPOSE_CMD="docker compose -f docker-compose.prod.yml"
             if [ -f .env.prod ]; then
               COMPOSE_CMD="$COMPOSE_CMD --env-file .env.prod"
             fi
 
-            # Pobierz obrazy dla wszystkich serwisów z pliku compose na serwerze (bez listy nazw —
-            # stary compose bez `web` nie wywali się na `pull ... web`).
+            echo "[deploy] docker compose pull…"
             $COMPOSE_CMD pull
+            echo "[deploy] pull zakończony OK."
 
-            set +e
-            $COMPOSE_CMD up -d
-            UP_EXIT=$?
-            set -e
+            echo "[deploy] docker compose pull skillgaming-web…"
+            $COMPOSE_CMD pull skillgaming-web
 
-            if [ "$UP_EXIT" -ne 0 ]; then
-              echo "[deploy] docker compose up failed, printing diagnostics..."
+            echo "[deploy] docker compose up -d --remove-orphans…"
+            if ! $COMPOSE_CMD up -d --remove-orphans; then
+              echo "[deploy] BŁĄD: docker compose up — diagnostyka:"
               $COMPOSE_CMD ps || true
-              docker logs --tail 200 apexpay-prod-api-migrator-1 || true
-              docker logs --tail 120 apexpay-prod-postgres-1 || true
-              exit "$UP_EXIT"
+              docker logs --tail 200 apexpay-prod-api-migrator-1 2>/dev/null || true
+              docker logs --tail 120 apexpay-prod-postgres-1 2>/dev/null || true
+              docker logs --tail 120 apexpay-prod-rabbitmq-1 2>/dev/null || true
+              exit 1
             fi
+
+            echo "[deploy] docker compose up -d skillgaming-web…"
+            $COMPOSE_CMD up -d skillgaming-web
+
+            echo "[deploy] Stan kontenerów:"
+            $COMPOSE_CMD ps
+            echo "[deploy] Zakończono pomyślnie: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   notify:
     name: Notify
@@ -144,4 +254,4 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_COLOR: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && '#ff0000' || '#36a64f' }}
           SLACK_TITLE: Raport z wdrożenia ApexPay
-          SLACK_MESSAGE: "Etap build-push: ${{ needs.build-push.result }} | Etap deploy: ${{ needs.deploy.result }} | Commit: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.workflow_run.head_sha }} | CI: ${{ github.event.workflow_run.html_url }}"
+          SLACK_MESSAGE: "Build/Push: ${{ needs.build-push.result }} | Deploy: ${{ needs.deploy.result }} | Obrazy: :`${{ needs.build-push.outputs.deploy_sha }}` | Commit: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.workflow_run.head_sha }} | CI: ${{ github.event.workflow_run.html_url }}"

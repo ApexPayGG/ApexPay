@@ -41,7 +41,9 @@ export declare class WalletService {
     transferP2P(fromUserId: string, toUserId: string, amount: bigint, referenceId: string): Promise<{
         idempotent: boolean;
     }>;
-    listTransactionsAdmin(skip: number, take: number): Promise<{
+    listTransactionsAdmin(skip: number, take: number, options?: {
+        referenceIdPrefix?: string;
+    }): Promise<{
         items: AdminTransactionRow[];
         total: number;
     }>;
@@ -49,7 +51,14 @@ export declare class WalletService {
         transaction: Transaction;
         created: boolean;
     }>;
+    /**
+     * Wpłata z webhooka PSP: `referenceId` = `dep:{pspRefId}`, izolacja Serializable.
+     * Używane razem z idempotencją Redis przed wywołaniem.
+     */
+    depositFundsPspWebhook(userId: string, amount: bigint, pspRefId: string): Promise<{
+        transaction: Transaction;
+        created: boolean;
+    }>;
     processEntryFee(userId: string, amount: bigint, referenceId: string): Promise<Transaction>;
-    private isInsufficientFundsDbError;
 }
 //# sourceMappingURL=wallet.service.d.ts.map

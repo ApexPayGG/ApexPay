@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Webhooki — ApexPay Docs</title>
+    <meta name="description" content="Zdarzenia B2B, HMAC-SHA256, Node.js i Python, retry backoff." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="webhooks">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Webhooki</span>
+        </nav>
+
+        <h1>Webhooki B2B</h1>
+        <p class="doc-lead">
+          Po wybranych operacjach ApexPay zapisuje zdarzenie w kolejce outbox i wysyła
+          <strong>POST</strong> JSON na skonfigurowany adres (<code class="inline">GET/PUT
+          /api/v1/integrations/config</code> — pole <code class="inline">webhookUrl</code> i sekret
+          <code class="inline">webhookSecret</code>).
+        </p>
+
+        <h2>Lista zdarzeń</h2>
+        <ul>
+          <li><code class="inline">charge.succeeded</code> — charge zaksięgowany; payload m.in. id, amount, splits.</li>
+          <li><code class="inline">charge.refunded</code> — zwrot; m.in. chargeId, refundId, coveredBy.</li>
+          <li><code class="inline">payout.created</code> — utworzenie wypłaty.</li>
+          <li><code class="inline">payout.paid</code> / <code class="inline">payout.failed</code> — po rozliczeniu admina.</li>
+          <li><code class="inline">dispute.created</code> — spór PSP; <code class="inline">dispute.won</code>, <code class="inline">dispute.lost</code> (oraz ewent. <code class="inline">dispute.accepted</code>) po rozstrzygnięciu.</li>
+          <li><code class="inline">ride.finalized</code> — rozliczenie kursu SAFE TAXI / <code class="inline">POST /api/v1/payments/ride-finalize</code>.</li>
+        </ul>
+
+        <h2 id="wh-verify">Weryfikacja podpisu (HMAC-SHA256)</h2>
+        <p>
+          Nagłówek <code class="inline">x-apexpay-signature</code> zawiera wartość <strong>szesnastkową</strong>
+          (lowercase) digestu HMAC-SHA256 policzonego z <strong>dokładnie tego samego</strong> surowego ciała
+          żądania UTF-8 co w <code class="inline">Content-Type: application/json</code>. Sekret:
+          <code class="inline">webhookSecret</code> z konfiguracji integratora.
+        </p>
+        <div class="callout callout--warn">
+          <strong>Implementacja</strong>
+          Odczytaj body jako bufor/string <strong>przed</strong> parsowaniem JSON. Porównaj digest w sposób
+          odporny na timing attacks (np. <code class="inline">crypto.timingSafeEqual</code> na buforach bajtów
+          zdekodowanych z hex).
+        </div>
+
+        <section class="doc-split" aria-labelledby="wh-node">
+          <div class="doc-split__body">
+            <h3 id="wh-node">Node.js (Express)</h3>
+            <p>Surowe <code class="inline">body</code>, weryfikacja HMAC, potem <code class="inline">JSON.parse</code>.</p>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykład Node.js">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-javascript">import crypto from "node:crypto";
+import express from "express";
+
+const app = express();
+const rawBody = express.raw({ type: "application/json" });
+
+app.post("/webhooks/apexpay", rawBody, (req, res) => {
+  const secret = process.env.APEXPAY_WEBHOOK_SECRET; // z GET /integrations/config
+  const sig = req.get("x-apexpay-signature");
+  if (!secret || !sig) {
+    res.sendStatus(400);
+    return;
+  }
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(req.body)
+    .digest("hex");
+  const a = Buffer.from(sig.trim(), "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    res.sendStatus(401);
+    return;
+  }
+  const event = JSON.parse(req.body.toString("utf8"));
+  res.status(200).json({ received: true });
+});</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="doc-split" aria-labelledby="wh-py">
+          <div class="doc-split__body">
+            <h3 id="wh-py">Python (Flask)</h3>
+            <p><code class="inline">get_data(cache=False)</code> przed parsowaniem JSON.</p>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykład Python">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-python">import hmac
+import hashlib
+from flask import Flask, request
+
+app = Flask(__name__)
+WEBHOOK_SECRET = b"your_webhook_secret"  # bytes
+
+@app.post("/webhooks/apexpay")
+def apexpay():
+    raw = request.get_data(cache=False)
+    sig = request.headers.get("x-apexpay-signature", "")
+    expected = hmac.new(WEBHOOK_SECRET, raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig.strip().lower(), expected.lower()):
+        return "", 401
+    event = request.get_json(silent=True)
+    return {"received": True}, 200</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <h2>Polityka ponowień (retry)</h2>
+        <p>
+          Przy błędach HTTP lub timeoutach stosowany jest backoff:
+          <strong>1 min → 5 min → 1 h</strong>, maksymalnie <strong>5</strong> prób dostawy. Po wyczerpaniu
+          prób wpis może trafić do kolejki dead-letter (obsługa administracyjna).
+        </p>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

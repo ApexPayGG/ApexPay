@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zwroty — ApexPay Docs</title>
+    <meta name="description" content="PLATFORM, CONNECTED_ACCOUNT, SPLIT, partial refunds, limit 180 dni." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="refunds">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Zwroty</span>
+        </nav>
+
+        <h1>Zwroty (refunds)</h1>
+        <p class="doc-lead">
+          <code class="inline">POST /api/v1/integrations/charges/:chargeId/refunds</code> — zwrot częściowy lub
+          pełny z wybranym modelem ponoszenia kosztu. Wymagany nagłówek
+          <code class="inline">Idempotency-Key</code>.
+        </p>
+
+        <section class="doc-split" aria-labelledby="refund-endpoint">
+          <div class="doc-split__body">
+            <h2 id="refund-endpoint">Endpoint</h2>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/integrations/charges/:chargeId/refunds</span>
+            </div>
+            <p>Przykładowe body JSON — po prawej (<code class="inline">coveredBy</code>: PLATFORM, CONNECTED_ACCOUNT lub SPLIT).</p>
+          </div>
+          <div class="doc-split__rail" aria-label="Body JSON">
+            <p class="docs-rail__label">Body</p>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-json">{
+  "amount": 3000,
+  "coveredBy": "SPLIT",
+  "reason": "Zwrot reklamacyjny"
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <h2>Trzy modele kosztów (<code class="inline">coveredBy</code>)</h2>
+        <ul>
+          <li>
+            <strong>PLATFORM</strong> — koszt ponosi portfel użytkownika platformy (zmienna środowiskowa
+            <code class="inline">APEXPAY_PLATFORM_USER_ID</code> lub
+            <code class="inline">SAFE_TAXI_PLATFORM_USER_ID</code> w zależności od konfiguracji).
+          </li>
+          <li>
+            <strong>CONNECTED_ACCOUNT</strong> — zwrot z portfeli subkont uczestniczących w oryginalnym splitcie;
+            debet może zejść poniżej zera.
+          </li>
+          <li>
+            <strong>SPLIT</strong> — podział proporcjonalny do rzeczywistych kredytów z ledgera charge (platforma
+            vs subkonta).
+          </li>
+        </ul>
+
+        <h2>Zwroty częściowe</h2>
+        <p>
+          Wiele żądań zwrotu jest dozwolone, dopóki suma kwot zwrotów w statusie
+          <code class="inline">SUCCEEDED</code> nie przekracza kwoty charge. Każde wywołanie powinno mieć unikalny
+          <code class="inline">Idempotency-Key</code>.
+        </p>
+
+        <h2>Okno czasowe</h2>
+        <p>
+          Zwroty są dozwolone wyłącznie w ciągu <strong>180 dni</strong> od <code class="inline">createdAt</code>
+          charge. Po przekroczeniu — odpowiedź błędu walidacji.
+        </p>
+
+        <h2>Ledger i webhook</h2>
+        <p>
+          Księgowanie używa typów <code class="inline">REFUND_DEBIT</code> / <code class="inline">REFUND_CREDIT</code>
+          z referencjami <code class="inline">ref:{refundId}:…</code>. Po sukcesie wysyłane jest zdarzenie
+          <code class="inline">charge.refunded</code> (patrz <a href="webhooks.html">Webhooki</a>).
+        </p>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

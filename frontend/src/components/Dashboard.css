@@ -78,6 +78,12 @@
   border-radius: 8px;
   padding: 0.45rem 0.6rem;
   cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+}
+
+a.dashboard-header__refresh:visited {
+  color: var(--text-muted);
 }
 
 .dashboard-header__refresh:hover:not(:disabled) {
@@ -155,6 +161,11 @@
   font-size: clamp(2rem, 5vw, 3.2rem);
   line-height: 1.1;
   font-weight: 800;
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
 }
 
 .dashboard-balance-card__currency {
@@ -267,6 +278,9 @@
 
 .dashboard-transactions__amount {
   font-weight: 700;
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
 }
 
 .dashboard-transactions__amount.is-positive {

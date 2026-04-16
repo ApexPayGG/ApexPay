@@ -1,87 +1,114 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PspDepositWebhookService,
-  PSP_DEPOSIT_REFERENCE_PREFIX,
+  PSP_DEPOSIT_IDEMP_KEY_PREFIX,
 } from "./psp-deposit-webhook.service.js";
 import type { WalletService } from "./wallet.service.js";
 
+function basePayload(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    pspRefId: "evt_1",
+    amount: 5000,
+    userId: "user_a",
+    currency: "PLN",
+    status: "SUCCESS" as const,
+    ...overrides,
+  };
+}
+
 describe("PspDepositWebhookService", () => {
-  const depositFunds = vi.fn();
-  const walletService = { depositFunds } as unknown as WalletService;
-  const service = new PspDepositWebhookService(walletService);
+  const depositFundsPspWebhook = vi.fn();
+  const redisSet = vi.fn();
+  const redisDel = vi.fn();
+  const walletService = { depositFundsPspWebhook } as unknown as WalletService;
+  const redis = {
+    set: redisSet,
+    del: redisDel,
+  };
+  const service = new PspDepositWebhookService(walletService, redis as never);
 
   beforeEach(() => {
-    depositFunds.mockReset();
+    depositFundsPspWebhook.mockReset();
+    redisSet.mockReset();
+    redisDel.mockReset();
   });
 
   it("parseBody rejects unknown extra keys (strict)", () => {
     expect(() =>
       service.parseBody({
-        paymentId: "p1",
-        userId: "u1",
-        amountMinor: "100",
-        status: "succeeded",
+        ...basePayload(),
         extra: 1,
       }),
     ).toThrow();
   });
 
-  it("applyDeposit ignores non-succeeded without calling wallet", async () => {
+  it("applyDeposit ignores non-SUCCESS without Redis nor wallet", async () => {
     const r = await service.applyDeposit(
-      service.parseBody({
-        paymentId: "p1",
-        userId: "u1",
-        amountMinor: "100",
-        status: "pending",
-      }),
+      service.parseBody({ ...basePayload(), status: "PENDING" }),
     );
     expect(r).toEqual({ outcome: "ignored_status" });
-    expect(depositFunds).not.toHaveBeenCalled();
+    expect(redisSet).not.toHaveBeenCalled();
+    expect(depositFundsPspWebhook).not.toHaveBeenCalled();
   });
 
-  it("applyDeposit calls depositFunds with prefixed referenceId", async () => {
+  it("applyDeposit returns redis_duplicate when SET NX does not acquire lock", async () => {
+    redisSet.mockResolvedValue(null);
+    const r = await service.applyDeposit(service.parseBody(basePayload()));
+    expect(r).toEqual({ outcome: "redis_duplicate" });
+    expect(depositFundsPspWebhook).not.toHaveBeenCalled();
+    expect(redisSet).toHaveBeenCalledWith(
+      `${PSP_DEPOSIT_IDEMP_KEY_PREFIX}evt_1`,
+      "1",
+      "EX",
+      86_400,
+      "NX",
+    );
+  });
+
+  it("applyDeposit calls depositFundsPspWebhook with dep reference via wallet", async () => {
+    redisSet.mockResolvedValue("OK");
     const txn = {
       id: "t1",
       walletId: "w1",
-      amount: 500n,
-      referenceId: `${PSP_DEPOSIT_REFERENCE_PREFIX}pay_xyz`,
+      amount: 5000n,
+      referenceId: "dep:evt_1",
       type: "DEPOSIT" as const,
       createdAt: new Date(),
     };
-    depositFunds.mockResolvedValue({ transaction: txn, created: true });
+    depositFundsPspWebhook.mockResolvedValue({ transaction: txn, created: true });
 
-    const payload = service.parseBody({
-      paymentId: "pay_xyz",
-      userId: "user_a",
-      amountMinor: "500",
-      status: "succeeded",
-    });
+    const payload = service.parseBody(basePayload());
     const r = await service.applyDeposit(payload);
 
-    expect(depositFunds).toHaveBeenCalledWith("user_a", 500n, `${PSP_DEPOSIT_REFERENCE_PREFIX}pay_xyz`);
+    expect(depositFundsPspWebhook).toHaveBeenCalledWith("user_a", 5000n, "evt_1");
     expect(r).toEqual({ outcome: "credited", transaction: txn, duplicate: false });
+    expect(redisDel).not.toHaveBeenCalled();
   });
 
-  it("applyDeposit sets duplicate when depositFunds returns created: false", async () => {
+  it("applyDeposit sets duplicate when wallet returns created: false", async () => {
+    redisSet.mockResolvedValue("OK");
     const txn = {
       id: "t_old",
       walletId: "w1",
-      amount: 500n,
-      referenceId: `${PSP_DEPOSIT_REFERENCE_PREFIX}pay_dup`,
+      amount: 5000n,
+      referenceId: "dep:evt_1",
       type: "DEPOSIT" as const,
       createdAt: new Date("2025-01-01"),
     };
-    depositFunds.mockResolvedValue({ transaction: txn, created: false });
+    depositFundsPspWebhook.mockResolvedValue({ transaction: txn, created: false });
 
-    const r = await service.applyDeposit(
-      service.parseBody({
-        paymentId: "pay_dup",
-        userId: "user_a",
-        amountMinor: "500",
-        status: "succeeded",
-      }),
-    );
-
+    const r = await service.applyDeposit(service.parseBody(basePayload()));
     expect(r).toEqual({ outcome: "credited", transaction: txn, duplicate: true });
+  });
+
+  it("applyDeposit deletes Redis key and rethrows on wallet error", async () => {
+    redisSet.mockResolvedValue("OK");
+    const err = new Error("db boom");
+    depositFundsPspWebhook.mockRejectedValue(err);
+
+    await expect(service.applyDeposit(service.parseBody(basePayload()))).rejects.toThrow(
+      "db boom",
+    );
+    expect(redisDel).toHaveBeenCalledWith(`${PSP_DEPOSIT_IDEMP_KEY_PREFIX}evt_1`);
   });
 });

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Charges — ApexPay Docs</title>
+    <meta name="description" content="Marketplace charge, split, Idempotency-Key, prowizja platformy." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="charges">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Charges</span>
+        </nav>
+
+        <h1>Marketplace charges</h1>
+        <p class="doc-lead">
+          <code class="inline">POST /api/v1/integrations/charges</code> tworzy charge z podziałem (split) na
+          portfele powiązane z subkontami (<code class="inline">ConnectedAccount</code>). Uwierzytelnienie:
+          <strong>wyłącznie klucz API</strong>.
+        </p>
+
+        <h2>Model rozliczenia</h2>
+        <ul>
+          <li>
+            <strong>Kwota całkowita</strong> (<code class="inline">amount</code>) — integer &gt; 0, w
+            <strong>groszach</strong>.
+          </li>
+          <li>
+            <strong>Split</strong> — tablica <code class="inline">splits: [{ connectedAccountId, amount }]</code>;
+            suma kwot w splitach nie może przekroczyć <code class="inline">amount</code>.
+          </li>
+          <li>
+            <strong>Prowizja platformy</strong> — różnica między <code class="inline">amount</code> a sumą splitów
+            trafia na portfel integratora (platforma) jako kredyt księgowy.
+          </li>
+          <li>Portfel integratora jest obciążany pełnym <code class="inline">amount</code> (debet).</li>
+        </ul>
+
+        <h2>Idempotencja</h2>
+        <p>
+          Wymagany nagłówek <code class="inline">Idempotency-Key</code> (string, do 256 znaków). Powtórzenie tego
+          samego klucza w oknie 24 h zwraca <strong>409</strong> (np.
+          <code class="inline">CONFLICT</code> / kolizja idempotencji).
+        </p>
+
+        <h2>Warunki subkont</h2>
+        <p>
+          Subkonto musi należeć do tego samego integratora co klucz API, mieć status
+          <code class="inline">ACTIVE</code> oraz powiązany użytkownik z portfelem. W przeciwnym razie —
+          <strong>403</strong> / błąd walidacji.
+        </p>
+
+        <section class="doc-split" aria-labelledby="charge-ex">
+          <div class="doc-split__body">
+            <h2 id="charge-ex">Przykład: dwa subkonta + reszta na platformę</h2>
+            <p>
+              Całkowicie: 100,00 PLN (10000 gr). 70 zł dla sprzedawcy A, 20 zł dla sprzedawcy B — 10 zł zostaje jako
+              prowizja platformy (integrator).
+            </p>
+            <div class="endpoint">
+              <span class="endpoint__method">POST</span>
+              <span>/api/v1/integrations/charges</span>
+            </div>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykład curl">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-bash">curl -sS -X POST "https://api.apexpay.pl/api/v1/integrations/charges" \
+  -H "x-api-key: apx_live_YOUR_KEY" \
+  -H "Idempotency-Key: order-2026-04-16-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 10000,
+    "currency": "PLN",
+    "splits": [
+      { "connectedAccountId": "ca_seller_a", "amount": 7000 },
+      { "connectedAccountId": "ca_seller_b", "amount": 2000 }
+    ]
+  }'</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <h2>Antyfraud</h2>
+        <p>
+          Przed księgowaniem wykonywana jest synchroniczna ocena. Przy <code class="inline">BLOCKED</code> —
+          odpowiedź <strong>422</strong> z <code class="inline">code: FRAUD_BLOCKED</code>. Przy
+          <code class="inline">FLAGGED</code> charge może zostać utworzony z opcjonalnym
+          <code class="inline">fraudCheckId</code>.
+        </p>
+
+        <h2>Ledger (referencje)</h2>
+        <p>
+          Wpisy księgowe używają m.in. prefiksów <code class="inline">mkt:{chargeId}:debit</code>,
+          <code class="inline">mkt:…:credit:{connectedAccountId}</code> oraz ewentualnie
+          <code class="inline">mkt:…:credit:platform</code>.
+        </p>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

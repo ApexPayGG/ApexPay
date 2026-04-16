@@ -61,7 +61,7 @@ function warnIfAmbiguousUrlCredentials(label: string, raw: string | undefined): 
     console.log(
       `[ops:check-env] UWAGA (${label}): w części po '//' przed '/' jest ${n}× znak '@'. ` +
         "Prawdopodobnie hasło w URL zawiera niezakodowane znaki — użyj percent-encoding w tym URL-u " +
-        "(np. @ → %40, : → %3A, / → %2F, ? → %3F, # → %23). W osobnych zmiennych *_PASSWORD możesz trzymać surowe hasło.",
+        "(np. @ → %40, : → %3A, / → %2F, ? → %3F, # → %23). W osobnych zmiennych (np. POSTGRES_PASSWORD, RABBITMQ_DEFAULT_PASS) możesz trzymać surowe hasło.",
     );
   }
 }

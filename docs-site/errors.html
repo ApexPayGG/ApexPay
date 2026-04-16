@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Błędy — ApexPay Docs</title>
+    <meta name="description" content="Kody HTTP, kody logiczne, traceId, zalecenia obsługi." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="errors">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Błędy</span>
+        </nav>
+
+        <h1>Kody błędów</h1>
+        <p class="doc-lead">
+          Nowsze endpointy zwracają JSON z polami <code class="inline">error</code> (komunikat),
+          <code class="inline">code</code> (maszyna czytelna, snake_case) oraz opcjonalnie
+          <code class="inline">traceId</code> do korelacji z logami serwera.
+        </p>
+
+        <h2>Format odpowiedzi</h2>
+        <div class="code-block">
+          <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+          <pre><code class="language-json">{
+  "error": "Validation failed",
+  "code": "BAD_REQUEST",
+  "traceId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}</code></pre>
+        </div>
+        <p>
+          Ten sam identyfikator śledzenia jest też propagowany w nagłówku odpowiedzi (jeśli włączony middleware
+          trace) — użyj go w ticketach wsparcia.
+        </p>
+
+        <h2>Tabela kodów</h2>
+        <p class="doc-lead" style="margin-bottom: 1rem">
+          Poniżej kategorie błędów i typowe wartości pola <code class="inline">code</code> w JSON. W praktyce API
+          może zwracać m.in. <code class="inline">BAD_REQUEST</code> zamiast ogólnej nazwy „validation”; dla
+          <strong>409</strong> często <code class="inline">CONFLICT</code> (w tym kolizja idempotencji).
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>HTTP</th>
+                <th>Kategoria / <code class="inline">code</code></th>
+                <th>Znaczenie i działanie</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>400</td>
+                <td><code class="inline">VALIDATION_ERROR</code> · <code class="inline">BAD_REQUEST</code></td>
+                <td>Niepoprawne body lub query (walidacja / Zod) — popraw schemat żądania; nie powtarzaj identycznego payloadu bez zmian.</td>
+              </tr>
+              <tr>
+                <td>401</td>
+                <td><code class="inline">UNAUTHORIZED</code></td>
+                <td>Brak lub wygasły token / klucz — odśwież JWT lub sprawdź nagłówek <code class="inline">x-api-key</code>.</td>
+              </tr>
+              <tr>
+                <td>403</td>
+                <td><code class="inline">FORBIDDEN</code></td>
+                <td>Autoryzacja OK, brak uprawnień (np. rola, cudze subkonto) — nie retry; skoryguj uprawnienia.</td>
+              </tr>
+              <tr>
+                <td>404</td>
+                <td><code class="inline">NOT_FOUND</code></td>
+                <td>Zasób nie istnieje lub nie jest widoczny dla kontekstu — zweryfikuj ID.</td>
+              </tr>
+              <tr>
+                <td>409</td>
+                <td><code class="inline">IDEMPOTENCY_CONFLICT</code> · <code class="inline">CONFLICT</code></td>
+                <td>Powtórzony <code class="inline">Idempotency-Key</code>, duplikat zasobu lub niedozwolony stan — użyj nowego klucza albo odczytaj istniejący rekord.</td>
+              </tr>
+              <tr>
+                <td>422</td>
+                <td><code class="inline">FRAUD_BLOCKED</code></td>
+                <td>Transakcja zablokowana przez reguły antyfraud — nie automatycznie retry; weryfikacja manualna.</td>
+              </tr>
+              <tr>
+                <td>429</td>
+                <td><code class="inline">TOO_MANY_REQUESTS</code></td>
+                <td>Rate limit (np. logowanie) — exponential backoff, ogranicz równoległość.</td>
+              </tr>
+              <tr>
+                <td>503</td>
+                <td><code class="inline">SERVICE_UNAVAILABLE</code></td>
+                <td>Zależność niedostępna (np. brak konfiguracji Autopay) lub przeciążenie — retry z backoffem.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Zalecenia</h2>
+        <ul>
+          <li>Loguj <code class="inline">traceId</code> po stronie klienta przy każdym błędzie 4xx/5xx.</li>
+          <li>Dla <strong>409</strong> idempotencji — traktuj jako sygnał, że ta sama operacja była już w toku.</li>
+          <li>Dla <strong>503</strong> — krótki backoff; przy długiej niedostępności skontaktuj się z operatorem.</li>
+        </ul>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

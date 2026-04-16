@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Uwierzytelnianie — ApexPay Docs</title>
+    <meta name="description" content="JWT (panel) i klucz API (B2B) — nagłówki, format apx_live_, przykłady." />
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+  </head>
+  <body data-page="authentication">
+    <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja dokumentacji">
+      <nav class="sidebar__section" aria-label="Przewodnik">
+        <p class="sidebar__label">Przewodnik</p>
+        <ul class="sidebar__nav">
+          <li><a href="index.html" data-nav="index">Quickstart</a></li>
+          <li><a href="authentication.html" data-nav="authentication">Uwierzytelnianie</a></li>
+          <li><a href="payments.html" data-nav="payments">Płatności</a></li>
+          <li><a href="charges.html" data-nav="charges">Charges</a></li>
+          <li><a href="payouts.html" data-nav="payouts">Wypłaty</a></li>
+          <li><a href="refunds.html" data-nav="refunds">Zwroty</a></li>
+          <li><a href="webhooks.html" data-nav="webhooks">Webhooki</a></li>
+          <li><a href="errors.html" data-nav="errors">Błędy</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Otwórz menu">☰</button>
+        <a href="index.html">ApexPay Docs</a>
+        <span class="top-bar__badge">API v1</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <main class="main main--wide">
+        <nav class="breadcrumb" aria-label="Ścieżka nawigacji">
+          <a href="index.html">Docs</a>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__current">Uwierzytelnianie</span>
+        </nav>
+
+        <h1>Uwierzytelnianie</h1>
+        <p class="doc-lead">
+          ApexPay obsługuje dwa modele: <strong>JWT</strong> (sesja użytkownika / panel) oraz
+          <strong>klucz API</strong> (integracje serwerowe B2B na wybranych trasach).
+        </p>
+
+        <h2>JWT (panel użytkownika)</h2>
+        <p>
+          Po <code class="inline">POST /api/v1/auth/login</code> otrzymujesz token JWT (zwykle zaczyna się od
+          <code class="inline">eyJ</code>). Przekazuj go jako:
+        </p>
+        <ul>
+          <li>
+            nagłówek <code class="inline">Authorization: Bearer &lt;jwt&gt;</code>, lub
+          </li>
+          <li>cookie <code class="inline">jwt</code> (httpOnly) w przeglądarce.</li>
+        </ul>
+        <p>
+          JWT służy m.in. do tworzenia kluczy API (<code class="inline">POST /api/v1/api-keys</code>),
+          odczytu konfiguracji integratora i list zasobów tam, gdzie dokumentacja dopuszcza „JWT lub klucz”.
+        </p>
+
+        <h2>Klucz API (integracje B2B)</h2>
+        <p>
+          Na endpointach integratorskich możesz użyć dedykowanego klucza z prefiksem
+          <code class="inline">apx_live_</code>. Przekaż go jednym z poniższych sposobów:
+        </p>
+        <ul>
+          <li><code class="inline">x-api-key: apx_live_...</code> (zalecane dla serwisów backendowych)</li>
+          <li>
+            <code class="inline">Authorization: Bearer apx_live_...</code> — wyłącznie gdy wartość po
+            <code class="inline">Bearer </code> zaczyna się od <code class="inline">apx_live_</code> (tokeny
+            JWT nadal używają tego samego nagłówka z prefiksem <code class="inline">eyJ</code>).
+          </li>
+        </ul>
+
+        <div class="callout callout--warn">
+          <strong>Bezpieczeństwo</strong>
+          Klucz jest hashowany w bazie (bcrypt); surowy sekret znany jest wyłącznie w odpowiedzi na
+          <code class="inline">POST /api/v1/api-keys</code>. Nie umieszczaj go w aplikacjach klienckich ani w
+          repozytoriach.
+        </div>
+
+        <h2>Generowanie klucza w panelu</h2>
+        <ol>
+          <li>Zaloguj się przez <code class="inline">POST /api/v1/auth/login</code>.</li>
+          <li>Wywołaj <code class="inline">POST /api/v1/api-keys</code> z ciałem <code class="inline">{ "name": "…" }</code>.</li>
+          <li>Zapisz pole <code class="inline">key</code> z odpowiedzi 201 — nie będzie ponownie wyświetlone.</li>
+        </ol>
+
+        <section class="doc-split" aria-labelledby="auth-example">
+          <div class="doc-split__body">
+            <h2 id="auth-example">Przykład żądania z kluczem API</h2>
+            <p>
+              Test połączenia: <code class="inline">GET /api/v1/integrations/me</code> zwraca
+              <code class="inline">userId</code> i <code class="inline">role</code> powiązane z kluczem.
+            </p>
+            <div class="endpoint">
+              <span class="endpoint__method">GET</span>
+              <span>/api/v1/integrations/me</span>
+            </div>
+          </div>
+          <div class="doc-split__rail" aria-label="Przykłady żądania i odpowiedzi">
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-bash">curl -sS "https://api.apexpay.pl/api/v1/integrations/me" \
+  -H "x-api-key: apx_live_YOUR_KEY"</code></pre>
+            </div>
+            <div class="code-block">
+              <button type="button" class="copy-btn" aria-label="Kopiuj przykład">Kopiuj</button>
+              <pre><code class="language-json">{
+  "userId": "clxxxxxxxxxxxxxxxx",
+  "role": "PLAYER"
+}</code></pre>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>

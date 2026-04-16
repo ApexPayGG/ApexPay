@@ -15,3 +15,7 @@ fund-wallet.private.http
 create-tournament.private.http
 start-tournament.private.http
 join-tournament.private.http
+
+# Wyniki k6 (lokalnie / artefakty CI)
+load-tests/results/
+
