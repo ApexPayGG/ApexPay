@@ -275,6 +275,9 @@ export class MatchController {
           if (match.status === "RESOLVED") {
             throw new Error("ALREADY_RESOLVED");
           }
+          if (match.status !== "DISPUTED") {
+            throw new Error("MATCH_NOT_DISPUTED");
+          }
 
           assertResolveWinnerInMatch(match, winnerId);
 
@@ -336,6 +339,11 @@ export class MatchController {
 
       if (msg === "ALREADY_RESOLVED") {
         res.status(409).json({ error: "Mecz jest już rozstrzygnięty." });
+        return;
+      }
+
+      if (msg === "MATCH_NOT_DISPUTED") {
+        res.status(409).json({ error: "Mecz nie jest w stanie sporu." });
         return;
       }
 
