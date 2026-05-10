@@ -4,6 +4,7 @@ import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
+  RideFinalizeAuthorizationError,
   RideFinalizeConfigError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
@@ -98,6 +99,7 @@ export class PaymentsController {
       return;
     }
 
+    let idempotencyKey: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -109,7 +111,7 @@ export class PaymentsController {
         return;
       }
 
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
         res.status(200).json({
@@ -141,12 +143,23 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (idempotencyKey !== undefined) {
+        try {
+          await this.redis.del(idempotencyKey);
+        } catch (redisErr) {
+          console.error("[payments/ride-finalize] failed to release idempotency key", redisErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
+        return;
+      }
+      if (err instanceof RideFinalizeAuthorizationError) {
+        res.status(403).json({ error: err.message, code: "FORBIDDEN" });
         return;
       }
       if (err instanceof RideFinalizeConfigError) {

@@ -1,4 +1,9 @@
-import { Prisma, TransactionType as TxType, type PrismaClient } from "@prisma/client";
+import {
+  Prisma,
+  SafeTaxiRideStatus,
+  TransactionType as TxType,
+  type PrismaClient,
+} from "@prisma/client";
 import type { Request } from "express";
 import { AuditActorType } from "@prisma/client";
 import type { AuditLogService } from "./audit-log.service.js";
@@ -35,6 +40,13 @@ export class RideFinalizeNotFoundError extends Error {
   }
 }
 
+export class RideFinalizeAuthorizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RideFinalizeAuthorizationError";
+  }
+}
+
 function platformUserIdFromEnv(): string {
   const value = process.env.SAFE_TAXI_PLATFORM_USER_ID?.trim();
   if (value === undefined || value.length === 0) {
@@ -57,10 +69,13 @@ export class RideFinalizeService {
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: { id: true, passengerId: true, driverId: true, status: true },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
+        }
+        if (ride.status !== SafeTaxiRideStatus.CREATED) {
+          throw new RideFinalizeAuthorizationError("Przejazd nie może być rozliczony w tym stanie.");
         }
 
         const connectedAccount = await tx.connectedAccount.findUnique({
@@ -69,6 +84,12 @@ export class RideFinalizeService {
         });
         if (connectedAccount === null || connectedAccount.userId === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (connectedAccount.integratorUserId !== req?.user?.id) {
+          throw new RideFinalizeAuthorizationError("Subkonto kierowcy nie należy do tego integratora.");
+        }
+        if (connectedAccount.userId !== ride.driverId) {
+          throw new RideFinalizeAuthorizationError("Subkonto kierowcy nie należy do kierowcy przejazdu.");
         }
 
         const [passengerWallet, driverWallet, platformWallet] = await Promise.all([
@@ -151,6 +172,17 @@ export class RideFinalizeService {
             },
           });
         }
+
+        await tx.safeTaxiRide.update({
+          where: { id: rideId },
+          data: {
+            status: SafeTaxiRideStatus.SETTLED,
+            fareCents: baseAmount,
+            platformCommissionCents: platformAmount,
+            driverPayoutCents: driverAmount + tipAmount,
+            settledAt: new Date(),
+          },
+        });
 
         if (this.auditLogService !== undefined) {
           await this.auditLogService.log(
