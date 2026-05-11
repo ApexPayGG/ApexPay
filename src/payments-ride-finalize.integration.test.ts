@@ -235,10 +235,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("404 gdy subkonto kierowcy nie należy do kierowcy przypisanego do przejazdu", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
-    const { prisma, tx } = buildContext({
-      rideDriverId: "expected_driver_user",
-      connectedAccountUserId: "other_driver_user",
-    });
+    const { prisma, tx } = buildContext({ rideDriverId: "expected_driver_user", connectedAccountUserId: "other_driver_user" });
     const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
 
     const res = await request(app)
@@ -255,9 +252,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("404 gdy klucz API nie należy do integratora subkonta kierowcy", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
-    const { prisma, tx } = buildContext({
-      connectedAccountIntegratorUserId: "other_integrator",
-    });
+    const { prisma, tx } = buildContext({ connectedAccountIntegratorUserId: "other_integrator" });
     const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
 
     const res = await request(app)
@@ -275,10 +270,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
   it("nie blokuje poprawnego rozliczenia po odrzuconej próbie z błędnym subkontem", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
     const redis = makeStatefulRedis();
-    const rejected = buildContext({
-      rideDriverId: "expected_driver_user",
-      connectedAccountUserId: "other_driver_user",
-    });
+    const rejected = buildContext({ rideDriverId: "expected_driver_user", connectedAccountUserId: "other_driver_user" });
     const rejectedApp = createApp({ prisma: rejected.prisma, redis, wsService: makeWs() }).app;
 
     const rejectedRes = await request(rejectedApp)
