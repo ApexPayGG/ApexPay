@@ -42,6 +42,14 @@ export class PaymentsController {
     private readonly redis: Redis,
   ) {}
 
+  private async releaseRideFinalizeIdempotency(idempotencyKey: string): Promise<void> {
+    try {
+      await this.redis.del(idempotencyKey);
+    } catch (err) {
+      console.error("[payments/ride-finalize/idempotency-release]", err);
+    }
+  }
+
   async initiate(req: Request, res: Response): Promise<void> {
     const userId = req.user?.id?.trim();
     if (userId === undefined || userId.length === 0) {
@@ -98,6 +106,7 @@ export class PaymentsController {
       return;
     }
 
+    let idempotencyKeyToRelease: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -118,6 +127,7 @@ export class PaymentsController {
         });
         return;
       }
+      idempotencyKeyToRelease = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -140,7 +150,11 @@ export class PaymentsController {
         tip: result.tip,
         duplicate: false,
       });
+      idempotencyKeyToRelease = undefined;
     } catch (err) {
+      if (idempotencyKeyToRelease !== undefined) {
+        await this.releaseRideFinalizeIdempotency(idempotencyKeyToRelease);
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
