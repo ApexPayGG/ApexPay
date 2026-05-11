@@ -103,6 +103,25 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      del: vi.fn().mockResolvedValue(1),
+    } as unknown as Redis;
+  }
+
+  function makeStatefulRedis(): Redis {
+    const keys = new Set<string>();
+    return {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockImplementation((key: string) => {
+        if (keys.has(key)) {
+          return Promise.resolve(null);
+        }
+        keys.add(key);
+        return Promise.resolve("OK");
+      }),
+      del: vi.fn().mockImplementation((key: string) => {
+        const deleted = keys.delete(key);
+        return Promise.resolve(deleted ? 1 : 0);
+      }),
     } as unknown as Redis;
   }
 
@@ -250,6 +269,36 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     expect(res.body).toMatchObject({ code: "NOT_FOUND" });
     expect(tx.wallet.update).not.toHaveBeenCalled();
     expect(tx.transaction.create).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it("nie blokuje poprawnego rozliczenia po odrzuconej próbie z błędnym subkontem", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const redis = makeStatefulRedis();
+    const rejected = buildContext({
+      rideDriverId: "expected_driver_user",
+      connectedAccountUserId: "other_driver_user",
+    });
+    const rejectedApp = createApp({ prisma: rejected.prisma, redis, wsService: makeWs() }).app;
+
+    const rejectedRes = await request(rejectedApp)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(rejectedRes.status).toBe(404);
+
+    const accepted = buildContext();
+    const acceptedApp = createApp({ prisma: accepted.prisma, redis, wsService: makeWs() }).app;
+    const acceptedRes = await request(acceptedApp)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(acceptedRes.status).toBe(201);
+    expect(accepted.createdTransactions.map((t) => t.referenceId)).toEqual(
+      expect.arrayContaining(["ride:ride_1:debit", "ride:ride_1:driver", "ride:ride_1:platform"]),
+    );
     vi.unstubAllEnvs();
   });
 });
