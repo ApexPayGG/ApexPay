@@ -57,7 +57,7 @@ export class RideFinalizeService {
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: { id: true, passengerId: true, driverId: true },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
@@ -68,6 +68,9 @@ export class RideFinalizeService {
           select: { id: true, userId: true, integratorUserId: true },
         });
         if (connectedAccount === null || connectedAccount.userId === null) {
+          throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (connectedAccount.userId !== ride.driverId || connectedAccount.integratorUserId !== req?.user?.id) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
         }
 
