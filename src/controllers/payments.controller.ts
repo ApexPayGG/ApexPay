@@ -53,6 +53,14 @@ export class PaymentsController {
     }
   }
 
+  private async markRideFinalizeDone(idempotencyKey: string): Promise<void> {
+    try {
+      await this.redis.set(idempotencyKey, IDEMPOTENCY_DONE, "EX", 86400);
+    } catch (err) {
+      console.error("[payments/ride-finalize/idempotency-done]", err);
+    }
+  }
+
   async initiate(req: Request, res: Response): Promise<void> {
     const userId = req.user?.id?.trim();
     if (userId === undefined || userId.length === 0) {
@@ -153,7 +161,7 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
-      await this.redis.set(idempotencyKey, IDEMPOTENCY_DONE, "EX", 86400);
+      await this.markRideFinalizeDone(idempotencyKey);
       idempotencyKeyToRelease = undefined;
 
       res.status(201).json({

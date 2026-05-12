@@ -56,6 +56,17 @@ export class AutopayItnWebhookController {
     }
   }
 
+  private async markItnDone(idempotencyKey: string): Promise<void> {
+    try {
+      await this.redis.set(idempotencyKey, IDEMP_DONE, "EX", IDEMP_TTL_SEC);
+    } catch (err) {
+      contextLogger().error(
+        { err: err instanceof Error ? err.message : String(err) },
+        "Autopay ITN idempotency done mark failed",
+      );
+    }
+  }
+
   async handle(req: Request, res: Response): Promise<void> {
     let idempotencyKeyToRelease: string | undefined;
     try {
@@ -83,12 +94,14 @@ export class AutopayItnWebhookController {
         const setOk = await this.redis.set(idempKey, IDEMP_PROCESSING, "EX", IDEMP_TTL_SEC, "NX");
         if (setOk !== "OK") {
           const state = await this.redis.get(idempKey);
-          if (state !== IDEMP_DONE) {
+          if (state === IDEMP_DONE) {
+            res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+            return;
+          }
+          if (state !== "1") {
             res.status(200).type("application/xml").send(errorXml("PROCESSING"));
             return;
           }
-          res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
-          return;
         }
         idempotencyKeyToRelease = idempKey;
 
@@ -107,7 +120,7 @@ export class AutopayItnWebhookController {
             }
           }
         }
-        await this.redis.set(idempKey, IDEMP_DONE, "EX", IDEMP_TTL_SEC);
+        await this.markItnDone(idempKey);
         idempotencyKeyToRelease = undefined;
       } else if (itn.PaymentStatus === "PENDING") {
         contextLogger().info({ orderId: itn.OrderID, remoteId: itn.RemoteID }, "Autopay ITN pending");
