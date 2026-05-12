@@ -51,16 +51,17 @@ describe("POST /internal/webhooks/autopay-itn", () => {
     process.env.AUTOPAY_RETURN_URL = "https://app.example.com/payments/return";
     process.env.AUTOPAY_ITN_URL = "https://api.example.com/internal/webhooks/autopay-itn";
 
-    let idempTaken = false;
+    const idemp = new Map<string, string>();
     const redis = {
       ping: vi.fn().mockResolvedValue("PONG"),
-      set: vi.fn().mockImplementation(async () => {
-        if (idempTaken) {
+      set: vi.fn().mockImplementation(async (key: string, value: string, _ex: string, _ttl: number, mode?: string) => {
+        if (mode === "NX" && idemp.has(key)) {
           return null;
         }
-        idempTaken = true;
+        idemp.set(key, value);
         return "OK";
       }),
+      get: vi.fn().mockImplementation(async (key: string) => idemp.get(key) ?? null),
       del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
 
