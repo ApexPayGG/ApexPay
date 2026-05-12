@@ -8,6 +8,8 @@ import { WalletNotFoundError, type WalletService } from "../services/wallet.serv
 
 const IDEMP_PREFIX = "idemp:autopay-itn:";
 const IDEMP_TTL_SEC = 86_400;
+const IDEMP_PROCESSING = "processing";
+const IDEMP_DONE = "done";
 
 function xmlEscape(s: string): string {
   return s
@@ -78,8 +80,13 @@ export class AutopayItnWebhookController {
         }
 
         const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-        const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
+        const setOk = await this.redis.set(idempKey, IDEMP_PROCESSING, "EX", IDEMP_TTL_SEC, "NX");
         if (setOk !== "OK") {
+          const state = await this.redis.get(idempKey);
+          if (state !== IDEMP_DONE) {
+            res.status(200).type("application/xml").send(errorXml("PROCESSING"));
+            return;
+          }
           res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
           return;
         }
@@ -100,6 +107,7 @@ export class AutopayItnWebhookController {
             }
           }
         }
+        await this.redis.set(idempKey, IDEMP_DONE, "EX", IDEMP_TTL_SEC);
         idempotencyKeyToRelease = undefined;
       } else if (itn.PaymentStatus === "PENDING") {
         contextLogger().info({ orderId: itn.OrderID, remoteId: itn.RemoteID }, "Autopay ITN pending");

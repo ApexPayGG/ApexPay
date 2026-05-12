@@ -30,6 +30,9 @@ const rideFinalizeBodySchema = z
   })
   .strict();
 
+const IDEMPOTENCY_PROCESSING = "processing";
+const IDEMPOTENCY_DONE = "done";
+
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
 }
@@ -119,8 +122,16 @@ export class PaymentsController {
       }
 
       const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      const idemSet = await this.redis.set(idempotencyKey, IDEMPOTENCY_PROCESSING, "EX", 86400, "NX");
       if (idemSet === null) {
+        const state = await this.redis.get(idempotencyKey);
+        if (state !== IDEMPOTENCY_DONE) {
+          res.status(409).json({
+            error: "Ride finalization is still processing.",
+            code: "PROCESSING",
+          });
+          return;
+        }
         res.status(200).json({
           rideId: body.ride_id,
           duplicate: true,
@@ -142,6 +153,8 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      await this.redis.set(idempotencyKey, IDEMPOTENCY_DONE, "EX", 86400);
+      idempotencyKeyToRelease = undefined;
 
       res.status(201).json({
         rideId: result.rideId,
@@ -150,7 +163,6 @@ export class PaymentsController {
         tip: result.tip,
         duplicate: false,
       });
-      idempotencyKeyToRelease = undefined;
     } catch (err) {
       if (idempotencyKeyToRelease !== undefined) {
         await this.releaseRideFinalizeIdempotency(idempotencyKeyToRelease);

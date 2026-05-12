@@ -1,4 +1,4 @@
-import { Prisma, TransactionType as TxType, type PrismaClient } from "@prisma/client";
+import { ConnectedAccountStatus, Prisma, TransactionType as TxType, type PrismaClient } from "@prisma/client";
 import type { Request } from "express";
 import { AuditActorType } from "@prisma/client";
 import type { AuditLogService } from "./audit-log.service.js";
@@ -65,12 +65,16 @@ export class RideFinalizeService {
 
         const connectedAccount = await tx.connectedAccount.findUnique({
           where: { id: input.driverConnectedAccountId },
-          select: { id: true, userId: true, integratorUserId: true },
+          select: { id: true, userId: true, integratorUserId: true, status: true },
         });
         if (connectedAccount === null || connectedAccount.userId === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
         }
-        if (connectedAccount.userId !== ride.driverId || connectedAccount.integratorUserId !== req?.user?.id) {
+        if (
+          connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+          connectedAccount.userId !== ride.driverId ||
+          connectedAccount.integratorUserId !== req?.user?.id
+        ) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
         }
 
