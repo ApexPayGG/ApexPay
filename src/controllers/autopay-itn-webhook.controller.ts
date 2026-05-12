@@ -43,7 +43,19 @@ export class AutopayItnWebhookController {
     private readonly redis: Redis,
   ) {}
 
+  private async releaseItnIdempotency(idempotencyKey: string): Promise<void> {
+    try {
+      await this.redis.del(idempotencyKey);
+    } catch (err) {
+      contextLogger().error(
+        { err: err instanceof Error ? err.message : String(err) },
+        "Autopay ITN idempotency release failed",
+      );
+    }
+  }
+
   async handle(req: Request, res: Response): Promise<void> {
+    let idempotencyKeyToRelease: string | undefined;
     try {
       const rawTransactions = req.body?.transactions;
       if (typeof rawTransactions !== "string" || rawTransactions.trim().length === 0) {
@@ -58,19 +70,20 @@ export class AutopayItnWebhookController {
         return;
       }
 
-      const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-      const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
-      if (setOk !== "OK") {
-        res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
-        return;
-      }
-
       if (itn.PaymentStatus === "SUCCESS") {
         const userId = userIdFromOrderId(itn.OrderID);
         const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
         if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
           throw new RangeError("Invalid Amount");
         }
+
+        const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
+        const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
+        if (setOk !== "OK") {
+          res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+          return;
+        }
+        idempotencyKeyToRelease = idempKey;
 
         await this.walletService.depositFundsPspWebhook(userId, BigInt(amountMinor), itn.RemoteID);
 
@@ -87,6 +100,7 @@ export class AutopayItnWebhookController {
             }
           }
         }
+        idempotencyKeyToRelease = undefined;
       } else if (itn.PaymentStatus === "PENDING") {
         contextLogger().info({ orderId: itn.OrderID, remoteId: itn.RemoteID }, "Autopay ITN pending");
       } else if (itn.PaymentStatus === "FAILURE") {
@@ -100,6 +114,9 @@ export class AutopayItnWebhookController {
 
       res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
     } catch (err) {
+      if (idempotencyKeyToRelease !== undefined) {
+        await this.releaseItnIdempotency(idempotencyKeyToRelease);
+      }
       if (err instanceof WalletNotFoundError || err instanceof RangeError) {
         contextLogger().warn(
           { err: err.message },
