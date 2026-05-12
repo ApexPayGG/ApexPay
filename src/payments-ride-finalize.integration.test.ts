@@ -22,11 +22,8 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
   });
 
   function buildContext(opts?: {
-    passengerBalance?: bigint;
-    rideDriverId?: string;
-    connectedAccountUserId?: string;
-    connectedAccountIntegratorUserId?: string;
-    connectedAccountStatus?: ConnectedAccountStatus;
+    passengerBalance?: bigint; rideDriverId?: string; connectedAccountUserId?: string;
+    connectedAccountIntegratorUserId?: string; connectedAccountStatus?: ConnectedAccountStatus;
   }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
     const rideDriverId = opts?.rideDriverId ?? "driver_user_1";
@@ -132,14 +129,9 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
   function makeWs(): WebSocketService { return { notifyWallet: vi.fn() } as unknown as WebSocketService; }
 
   const payload = {
-    ride_id: "ride_1",
-    base_amount_grosze: 1000,
-    platform_commission_grosze: 200,
-    driver_base_payout_grosze: 800,
-    tip_amount_grosze: 50,
-    tip_settlement: "CREDIT_CONNECTED_ACCOUNT",
-    passenger_rating_stars: 5,
-    driver_connected_account_id: "ca_1",
+    ride_id: "ride_1", base_amount_grosze: 1000, platform_commission_grosze: 200,
+    driver_base_payout_grosze: 800, tip_amount_grosze: 50, tip_settlement: "CREDIT_CONNECTED_ACCOUNT",
+    passenger_rating_stars: 5, driver_connected_account_id: "ca_1",
   };
 
   it("401 bez klucza API", async () => {
@@ -155,11 +147,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
-      .send({
-        ...payload,
-        platform_commission_grosze: 100,
-        driver_base_payout_grosze: 100,
-      });
+      .send({ ...payload, platform_commission_grosze: 100, driver_base_payout_grosze: 100 });
     expect(res.status).toBe(400);
     expect(String(res.body.error)).toContain("Nieprawidłowy split");
   });
@@ -175,19 +163,10 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       .send(payload);
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      rideId: "ride_1",
-      driverPayout: 850,
-      platformCommission: 200,
-      tip: 50,
-      duplicate: false,
-    });
+    expect(res.body).toMatchObject({ rideId: "ride_1", driverPayout: 850, platformCommission: 200, tip: 50, duplicate: false });
     expect(createdTransactions.map((t) => t.referenceId)).toEqual(
       expect.arrayContaining([
-        "ride:ride_1:debit",
-        "ride:ride_1:driver",
-        "ride:ride_1:platform",
-        "ride:ride_1:tip",
+        "ride:ride_1:debit", "ride:ride_1:driver", "ride:ride_1:platform", "ride:ride_1:tip",
       ]),
     );
     vi.unstubAllEnvs();
@@ -224,21 +203,13 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       .send(payload);
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      rideId: "ride_1",
-      driverPayout: 850,
-      platformCommission: 200,
-      tip: 50,
-      duplicate: false,
-    });
+    expect(res.body).toMatchObject({ rideId: "ride_1", driverPayout: 850, platformCommission: 200, tip: 50, duplicate: false });
 
     const refs = createdTransactions.map((t) => t.referenceId);
     expect(refs).not.toContain("ride:ride_1:debit");
     expect(refs).toEqual(
       expect.arrayContaining([
-        "ride:ride_1:driver",
-        "ride:ride_1:platform",
-        "ride:ride_1:tip",
+        "ride:ride_1:driver", "ride:ride_1:platform", "ride:ride_1:tip",
       ]),
     );
     vi.unstubAllEnvs();
@@ -246,10 +217,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("404 gdy subkonto kierowcy nie należy do kierowcy przypisanego do przejazdu", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
-    const { prisma, tx } = buildContext({
-      rideDriverId: "expected_driver_user",
-      connectedAccountUserId: "other_driver_user",
-    });
+    const { prisma, tx } = buildContext({ rideDriverId: "expected_driver_user", connectedAccountUserId: "other_driver_user" });
     const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
 
     const res = await request(app)
@@ -295,10 +263,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
   it("nie blokuje poprawnego rozliczenia po odrzuconej próbie z błędnym subkontem", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
     const redis = makeStatefulRedis();
-    const rejected = buildContext({
-      rideDriverId: "expected_driver_user",
-      connectedAccountUserId: "other_driver_user",
-    });
+    const rejected = buildContext({ rideDriverId: "expected_driver_user", connectedAccountUserId: "other_driver_user" });
     const rejectedApp = createApp({ prisma: rejected.prisma, redis, wsService: makeWs() }).app;
 
     const rejectedRes = await request(rejectedApp)
