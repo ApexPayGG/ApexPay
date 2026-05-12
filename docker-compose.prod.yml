@@ -151,6 +151,13 @@ services:
       - traefik.http.routers.api-inapp.tls.certresolver=letsencrypt
       - traefik.http.routers.api-inapp.middlewares=api-ratelimit
       - traefik.http.routers.api-inapp.priority=100
+      # SkillGaming also uses relative /api/* on its own host; route those to API before the SPA.
+      - "traefik.http.routers.api-skillgaming-inapp.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`) && PathPrefix(`/api`)"
+      - traefik.http.routers.api-skillgaming-inapp.service=api
+      - traefik.http.routers.api-skillgaming-inapp.entrypoints=websecure
+      - traefik.http.routers.api-skillgaming-inapp.tls.certresolver=letsencrypt
+      - traefik.http.routers.api-skillgaming-inapp.middlewares=api-ratelimit
+      - traefik.http.routers.api-skillgaming-inapp.priority=100
     depends_on:
       api-migrator:
         condition: service_completed_successfully
@@ -204,7 +211,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=apexpay_prod_network
-      - "traefik.http.routers.skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`)"
+      - "traefik.http.routers.skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`) && !PathPrefix(`/api`)"
       - traefik.http.routers.skillgaming.entrypoints=websecure
       - traefik.http.routers.skillgaming.tls.certresolver=letsencrypt
       - traefik.http.services.skillgaming.loadbalancer.server.port=80
