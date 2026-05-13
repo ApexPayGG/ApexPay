@@ -76,11 +76,12 @@ export class MatchSettlementService {
             if (row.status !== "DISPUTED") {
               throw new MatchSettlementError("MATCH_NOT_DISPUTED");
             }
+            const assignedPlayerIds = [row.playerAId, row.playerBId].filter(
+              (playerId): playerId is string => playerId != null,
+            );
             if (
-              row.playerAId != null &&
-              row.playerBId != null &&
-              finalWinnerId !== row.playerAId &&
-              finalWinnerId !== row.playerBId
+              assignedPlayerIds.length === 0 ||
+              !assignedPlayerIds.includes(finalWinnerId)
             ) {
               throw new MatchSettlementError("WINNER_NOT_IN_MATCH");
             }

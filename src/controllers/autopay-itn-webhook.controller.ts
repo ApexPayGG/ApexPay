@@ -61,20 +61,20 @@ export class AutopayItnWebhookController {
         return;
       }
 
-      const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-      const setOk = await this.redis.set(idempKey, IDEMP_PROCESSING, "EX", IDEMP_TTL_SEC, "NX");
-      if (setOk !== "OK") {
-        const state = await this.redis.get(idempKey);
-        if (state === IDEMP_DONE) {
-          res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+      if (itn.PaymentStatus === "SUCCESS") {
+        const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
+        const setOk = await this.redis.set(idempKey, IDEMP_PROCESSING, "EX", IDEMP_TTL_SEC, "NX");
+        if (setOk !== "OK") {
+          const state = await this.redis.get(idempKey);
+          if (state === IDEMP_DONE) {
+            res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+            return;
+          }
+          res.status(200).type("application/xml").send(errorXml("INTERNAL_ERROR"));
           return;
         }
-        res.status(200).type("application/xml").send(errorXml("INTERNAL_ERROR"));
-        return;
-      }
-      acquiredIdempKey = idempKey;
+        acquiredIdempKey = idempKey;
 
-      if (itn.PaymentStatus === "SUCCESS") {
         const userId = userIdFromOrderId(itn.OrderID);
         const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
         if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
@@ -96,6 +96,8 @@ export class AutopayItnWebhookController {
             }
           }
         }
+        await this.redis.set(idempKey, IDEMP_DONE, "EX", IDEMP_TTL_SEC);
+        acquiredIdempKey = null;
       } else if (itn.PaymentStatus === "PENDING") {
         contextLogger().info({ orderId: itn.OrderID, remoteId: itn.RemoteID }, "Autopay ITN pending");
       } else if (itn.PaymentStatus === "FAILURE") {
@@ -107,8 +109,6 @@ export class AutopayItnWebhookController {
         );
       }
 
-      await this.redis.set(idempKey, IDEMP_DONE, "EX", IDEMP_TTL_SEC);
-      acquiredIdempKey = null;
       res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
     } catch (err) {
       if (acquiredIdempKey !== null) {
