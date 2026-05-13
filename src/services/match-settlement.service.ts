@@ -77,8 +77,8 @@ export class MatchSettlementService {
               throw new MatchSettlementError("MATCH_NOT_DISPUTED");
             }
             if (
-              row.playerAId !== null &&
-              row.playerBId !== null &&
+              row.playerAId != null &&
+              row.playerBId != null &&
               finalWinnerId !== row.playerAId &&
               finalWinnerId !== row.playerBId
             ) {
