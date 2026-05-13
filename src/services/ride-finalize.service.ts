@@ -35,6 +35,13 @@ export class RideFinalizeNotFoundError extends Error {
   }
 }
 
+export class RideFinalizeForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RideFinalizeForbiddenError";
+  }
+}
+
 function platformUserIdFromEnv(): string {
   const value = process.env.SAFE_TAXI_PLATFORM_USER_ID?.trim();
   if (value === undefined || value.length === 0) {
@@ -57,7 +64,7 @@ export class RideFinalizeService {
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: { id: true, passengerId: true, driverId: true },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
@@ -69,6 +76,12 @@ export class RideFinalizeService {
         });
         if (connectedAccount === null || connectedAccount.userId === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (connectedAccount.integratorUserId !== req?.user?.id) {
+          throw new RideFinalizeForbiddenError("Subkonto kierowcy nie należy do integratora.");
+        }
+        if (connectedAccount.userId !== ride.driverId) {
+          throw new RideFinalizeForbiddenError("Subkonto kierowcy nie pasuje do przejazdu.");
         }
 
         const [passengerWallet, driverWallet, platformWallet] = await Promise.all([

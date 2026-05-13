@@ -22,6 +22,8 @@ type LockedMatchRow = {
   status: string;
   winnerId: string | null;
   tournamentId: string;
+  playerAId: string | null;
+  playerBId: string | null;
 };
 
 export type SettleDisputedMatchResult = {
@@ -58,7 +60,7 @@ export class MatchSettlementService {
             async (tx) => {
             const locked = await tx.$queryRaw<LockedMatchRow[]>(
               Prisma.sql`
-                SELECT id, status, "winnerId", "tournamentId"
+                SELECT id, status, "winnerId", "tournamentId", "playerAId", "playerBId"
                 FROM "Match"
                 WHERE id = ${matchId}
                 FOR UPDATE
@@ -73,6 +75,15 @@ export class MatchSettlementService {
             }
             if (row.status !== "DISPUTED") {
               throw new MatchSettlementError("MATCH_NOT_DISPUTED");
+            }
+            const assignedPlayerIds = [row.playerAId, row.playerBId].filter(
+              (playerId): playerId is string => playerId != null,
+            );
+            if (
+              assignedPlayerIds.length === 0 ||
+              !assignedPlayerIds.includes(finalWinnerId)
+            ) {
+              throw new MatchSettlementError("WINNER_NOT_IN_MATCH");
             }
 
             const match = await tx.match.findUnique({

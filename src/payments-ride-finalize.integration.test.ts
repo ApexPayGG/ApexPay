@@ -21,18 +21,31 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     keyHash = await bcrypt.hash(fullApiKey, 4);
   });
 
-  function buildContext(opts?: { passengerBalance?: bigint }) {
+  function buildContext(opts?: {
+    passengerBalance?: bigint;
+    rideDriverId?: string;
+    connectedAccountUserId?: string;
+    connectedAccountIntegratorUserId?: string;
+  }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
+    const rideDriverId = opts?.rideDriverId ?? "driver_user_1";
+    const connectedAccountUserId = opts?.connectedAccountUserId ?? "driver_user_1";
+    const connectedAccountIntegratorUserId =
+      opts?.connectedAccountIntegratorUserId ?? integratorUserId;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
     const tx = {
       safeTaxiRide: {
-        findUnique: vi.fn().mockResolvedValue({ id: "ride_1", passengerId: "passenger_1" }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "ride_1",
+          passengerId: "passenger_1",
+          driverId: rideDriverId,
+        }),
       },
       connectedAccount: {
         findUnique: vi.fn().mockResolvedValue({
           id: "ca_1",
-          userId: "driver_user_1",
-          integratorUserId,
+          userId: connectedAccountUserId,
+          integratorUserId: connectedAccountIntegratorUserId,
         }),
       },
       wallet: {
@@ -40,7 +53,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           if (args.where.userId === "passenger_1") {
             return Promise.resolve({ id: "w_passenger", balance: passengerBalance });
           }
-          if (args.where.userId === "driver_user_1") {
+          if (args.where.userId === connectedAccountUserId) {
             return Promise.resolve({ id: "w_driver" });
           }
           if (args.where.userId === "platform_1") {
@@ -95,6 +108,25 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      del: vi.fn().mockResolvedValue(1),
+    } as unknown as Redis;
+  }
+
+  function makeStatefulRedis(): Redis {
+    const keys = new Set<string>();
+    return {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockImplementation(async (key: string) => {
+        if (keys.has(key)) {
+          return null;
+        }
+        keys.add(key);
+        return "OK";
+      }),
+      del: vi.fn().mockImplementation(async (key: string) => {
+        const deleted = keys.delete(key);
+        return deleted ? 1 : 0;
+      }),
     } as unknown as Redis;
   }
 
@@ -160,6 +192,79 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         "ride:ride_1:platform",
         "ride:ride_1:tip",
       ]),
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("403 gdy subkonto kierowcy nie należy do integratora z klucza API", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, createdTransactions } = buildContext({
+      connectedAccountIntegratorUserId: "other_integrator",
+    });
+    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(403);
+    expect(createdTransactions).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("403 gdy subkonto nie jest kierowcą rozliczanego przejazdu", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, createdTransactions } = buildContext({
+      rideDriverId: "real_driver_1",
+      connectedAccountUserId: "attacker_driver_1",
+    });
+    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(403);
+    expect(createdTransactions).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("zwalnia idempotencję po 403, aby poprawne rozliczenie tego samego ride_id mogło przejść", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, tx, createdTransactions } = buildContext();
+    tx.connectedAccount.findUnique = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "ca_1",
+        userId: "driver_user_1",
+        integratorUserId: "other_integrator",
+      })
+      .mockResolvedValue({
+        id: "ca_1",
+        userId: "driver_user_1",
+        integratorUserId,
+      });
+    const { app } = createApp({
+      prisma,
+      redis: makeStatefulRedis(),
+      wsService: makeWs(),
+    });
+
+    const forbidden = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(forbidden.status).toBe(403);
+
+    const valid = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(valid.status).toBe(201);
+    expect(createdTransactions.map((t) => t.referenceId)).toEqual(
+      expect.arrayContaining(["ride:ride_1:driver", "ride:ride_1:platform"]),
     );
     vi.unstubAllEnvs();
   });
