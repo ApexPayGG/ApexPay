@@ -17,6 +17,8 @@ function createTxMock(overrides: {
     status: string;
     winnerId: string | null;
     tournamentId: string;
+    playerAId?: string | null;
+    playerBId?: string | null;
   };
 } = {}) {
   const matchRow = overrides.matchRow ?? {
@@ -24,6 +26,8 @@ function createTxMock(overrides: {
     status: "DISPUTED",
     winnerId: null,
     tournamentId: "t1",
+    playerAId: null,
+    playerBId: null,
   };
   const queryRaw = vi.fn().mockResolvedValue([matchRow]);
   const matchFindUnique = vi.fn();
@@ -62,7 +66,16 @@ describe("MatchSettlementService", () => {
 
   beforeEach(() => {
     bracketHoist.advanceAfterTerminalMatch.mockClear();
-    txMocks = createTxMock();
+    txMocks = createTxMock({
+      matchRow: {
+        id: "m1",
+        status: "DISPUTED",
+        winnerId: null,
+        tournamentId: "t1",
+        playerAId: "a",
+        playerBId: "b",
+      },
+    });
     const prismaTransaction = vi.fn(
       async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
         fn(txMocks.tx),
