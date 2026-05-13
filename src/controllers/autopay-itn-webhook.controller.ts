@@ -8,6 +8,8 @@ import { WalletNotFoundError, type WalletService } from "../services/wallet.serv
 
 const IDEMP_PREFIX = "idemp:autopay-itn:";
 const IDEMP_TTL_SEC = 86_400;
+const IDEMP_PROCESSING = "processing";
+const IDEMP_DONE = "done";
 
 function xmlEscape(s: string): string {
   return s
@@ -44,6 +46,7 @@ export class AutopayItnWebhookController {
   ) {}
 
   async handle(req: Request, res: Response): Promise<void> {
+    let acquiredIdempKey: string | null = null;
     try {
       const rawTransactions = req.body?.transactions;
       if (typeof rawTransactions !== "string" || rawTransactions.trim().length === 0) {
@@ -59,11 +62,17 @@ export class AutopayItnWebhookController {
       }
 
       const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-      const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
+      const setOk = await this.redis.set(idempKey, IDEMP_PROCESSING, "EX", IDEMP_TTL_SEC, "NX");
       if (setOk !== "OK") {
-        res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+        const state = await this.redis.get(idempKey);
+        if (state === IDEMP_DONE) {
+          res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+          return;
+        }
+        res.status(200).type("application/xml").send(errorXml("INTERNAL_ERROR"));
         return;
       }
+      acquiredIdempKey = idempKey;
 
       if (itn.PaymentStatus === "SUCCESS") {
         const userId = userIdFromOrderId(itn.OrderID);
@@ -98,8 +107,20 @@ export class AutopayItnWebhookController {
         );
       }
 
+      await this.redis.set(idempKey, IDEMP_DONE, "EX", IDEMP_TTL_SEC);
+      acquiredIdempKey = null;
       res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
     } catch (err) {
+      if (acquiredIdempKey !== null) {
+        try {
+          await this.redis.del(acquiredIdempKey);
+        } catch (redisErr) {
+          contextLogger().error(
+            { err: redisErr instanceof Error ? redisErr.message : String(redisErr) },
+            "Autopay ITN idempotency cleanup failed",
+          );
+        }
+      }
       if (err instanceof WalletNotFoundError || err instanceof RangeError) {
         contextLogger().warn(
           { err: err.message },

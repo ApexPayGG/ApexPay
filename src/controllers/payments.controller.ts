@@ -5,6 +5,7 @@ import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
   RideFinalizeConfigError,
+  RideFinalizeForbiddenError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
@@ -147,6 +148,10 @@ export class PaymentsController {
       }
       if (err instanceof RideFinalizeNotFoundError) {
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
+        return;
+      }
+      if (err instanceof RideFinalizeForbiddenError) {
+        res.status(403).json({ error: err.message, code: "FORBIDDEN" });
         return;
       }
       if (err instanceof RideFinalizeConfigError) {
