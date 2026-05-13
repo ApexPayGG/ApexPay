@@ -111,6 +111,24 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     } as unknown as Redis;
   }
 
+  function makeStatefulRedis(): Redis {
+    const keys = new Set<string>();
+    return {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockImplementation(async (key: string) => {
+        if (keys.has(key)) {
+          return null;
+        }
+        keys.add(key);
+        return "OK";
+      }),
+      del: vi.fn().mockImplementation(async (key: string) => {
+        const deleted = keys.delete(key);
+        return deleted ? 1 : 0;
+      }),
+    } as unknown as Redis;
+  }
+
   function makeWs(): WebSocketService {
     return { notifyWallet: vi.fn() } as unknown as WebSocketService;
   }
@@ -209,6 +227,44 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
     expect(res.status).toBe(403);
     expect(createdTransactions).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("zwalnia idempotencję po 403, aby poprawne rozliczenie tego samego ride_id mogło przejść", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, tx, createdTransactions } = buildContext();
+    tx.connectedAccount.findUnique = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "ca_1",
+        userId: "driver_user_1",
+        integratorUserId: "other_integrator",
+      })
+      .mockResolvedValue({
+        id: "ca_1",
+        userId: "driver_user_1",
+        integratorUserId,
+      });
+    const { app } = createApp({
+      prisma,
+      redis: makeStatefulRedis(),
+      wsService: makeWs(),
+    });
+
+    const forbidden = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(forbidden.status).toBe(403);
+
+    const valid = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(valid.status).toBe(201);
+    expect(createdTransactions.map((t) => t.referenceId)).toEqual(
+      expect.arrayContaining(["ride:ride_1:driver", "ride:ride_1:platform"]),
+    );
     vi.unstubAllEnvs();
   });
 
