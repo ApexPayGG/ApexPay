@@ -185,7 +185,16 @@ describe("MatchSettlementService", () => {
   });
 
   it("rejects payout to a winner who is not assigned to the match", async () => {
-    txMocks = createTxMock();
+    txMocks = createTxMock({
+      matchRow: {
+        id: "m1",
+        status: "DISPUTED",
+        winnerId: null,
+        tournamentId: "t1",
+        playerAId: "a",
+        playerBId: "b",
+      },
+    });
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
       async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
         fn(txMocks.tx),
