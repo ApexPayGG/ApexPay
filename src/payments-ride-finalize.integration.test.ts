@@ -103,6 +103,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
 
@@ -178,7 +179,8 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       rideDriverId: "driver_user_1",
       connectedAccountUserId: "attacker_driver_user",
     });
-    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+    const redis = makeRedis("OK");
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
 
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
@@ -187,6 +189,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
     expect(res.status).toBe(404);
     expect(createdTransactions).toEqual([]);
+    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
     vi.unstubAllEnvs();
   });
 
@@ -195,7 +198,8 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     const { prisma, createdTransactions } = buildContext({
       connectedAccountIntegratorUserId: "other_integrator",
     });
-    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+    const redis = makeRedis("OK");
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
 
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
@@ -204,6 +208,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
     expect(res.status).toBe(404);
     expect(createdTransactions).toEqual([]);
+    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
     vi.unstubAllEnvs();
   });
 
