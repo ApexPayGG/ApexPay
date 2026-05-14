@@ -52,12 +52,13 @@ export class RideFinalizeService {
   async finalizeRide(input: RideFinalizeInput, req?: Request): Promise<RideFinalizeResult> {
     const platformUserId = platformUserIdFromEnv();
     const rideId = input.rideId.trim();
+    const integratorUserId = req?.user?.id?.trim();
 
     return this.prisma.$transaction(
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: { id: true, passengerId: true, driverId: true },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
@@ -69,6 +70,9 @@ export class RideFinalizeService {
         });
         if (connectedAccount === null || connectedAccount.userId === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (connectedAccount.userId !== ride.driverId || connectedAccount.integratorUserId !== integratorUserId) {
+          throw new RideFinalizeNotFoundError("Subkonto kierowcy nie pasuje do przejazdu.");
         }
 
         const [passengerWallet, driverWallet, platformWallet] = await Promise.all([

@@ -98,6 +98,8 @@ export class PaymentsController {
       return;
     }
 
+    let idempotencyKey: string | null = null;
+    let idempotencyLocked = false;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -109,15 +111,25 @@ export class PaymentsController {
         return;
       }
 
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      const idemSet = await this.redis.set(idempotencyKey, "processing", "EX", 86400, "NX");
       if (idemSet === null) {
+        const idempotencyState = await this.redis.get(idempotencyKey);
+        if (idempotencyState !== "done") {
+          res.status(409).json({
+            error: "Ride finalize is already processing.",
+            code: "IDEMPOTENCY_IN_PROGRESS",
+            rideId: body.ride_id,
+          });
+          return;
+        }
         res.status(200).json({
           rideId: body.ride_id,
           duplicate: true,
         });
         return;
       }
+      idempotencyLocked = true;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -132,6 +144,10 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      await this.redis.set(idempotencyKey, "done", "EX", 86400).catch((redisErr: unknown) => {
+        console.error("[payments/ride-finalize] failed to mark idempotency key done", redisErr);
+      });
+      idempotencyLocked = false;
 
       res.status(201).json({
         rideId: result.rideId,
@@ -141,6 +157,11 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (idempotencyLocked && idempotencyKey !== null) {
+        await this.redis.del(idempotencyKey).catch((redisErr: unknown) => {
+          console.error("[payments/ride-finalize] failed to release idempotency key", redisErr);
+        });
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
