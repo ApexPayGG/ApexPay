@@ -99,10 +99,11 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return { prisma, tx, createdTransactions };
   }
 
-  function makeRedis(setResult: "OK" | null = "OK"): Redis {
+  function makeRedis(setResult: "OK" | null = "OK", getResult = "done"): Redis {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      get: vi.fn().mockResolvedValue(getResult),
       del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
@@ -214,13 +215,28 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("200 duplicate:true dla duplikatu ride_id", async () => {
     const { prisma } = buildContext();
-    const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
+    const { app } = createApp({ prisma, redis: makeRedis(null, "done"), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+  });
+
+  it("409 gdy finalizacja tego ride_id jest jeszcze w toku", async () => {
+    const { prisma } = buildContext();
+    const { app } = createApp({ prisma, redis: makeRedis(null, "processing"), wsService: makeWs() });
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "IDEMPOTENCY_IN_PROGRESS",
+      rideId: "ride_1",
+    });
   });
 
   it("201 gdy pay-in był wcześniej (saldo pasażera = 0) — skip debetu pasażera, credity wykonane", async () => {
