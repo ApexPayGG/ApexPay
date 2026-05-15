@@ -398,9 +398,14 @@ export function createApp(options: CreateAppOptions): {
     adminRouter,
   );
 
-  app.post("/api/wallet/deposit", authMiddleware, (req, res) => {
-    void walletController.deposit(req as never, res as never);
-  });
+  app.post(
+    "/api/wallet/deposit",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    (req, res) => {
+      void walletController.deposit(req as never, res as never);
+    },
+  );
 
   app.post("/api/wallet/charge", authMiddleware, (req, res) => {
     void walletController.chargeEntryFee(req as never, res as never);
@@ -630,14 +635,20 @@ export function createApp(options: CreateAppOptions): {
     void matchController.reportResult(req as never, res as never);
   });
 
-  app.post("/api/matches/:id/resolve", authMiddleware, (req, res) => {
-    void matchController.resolveDispute(req as never, res as never);
-  });
+  app.post(
+    "/api/matches/:id/resolve",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    (req, res) => {
+      void matchController.resolveDispute(req as never, res as never);
+    },
+  );
 
   app.post(
     "/api/v1/matches/:id/resolve",
     hmacSignature,
     authMiddleware,
+    requireRole([UserRole.ADMIN]),
     resolveRateLimit,
     idempotencyResolve,
     (req, res) => {

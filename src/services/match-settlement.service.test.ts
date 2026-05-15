@@ -120,6 +120,74 @@ describe("MatchSettlementService", () => {
     ).rejects.toMatchObject({ code: "MATCH_NOT_DISPUTED" });
   });
 
+  it("rejects a final winner who is not assigned to the match", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      playerAId: "player-a",
+      playerBId: "player-b",
+      awardsTournamentPrize: false,
+      tournament: {
+        entryFee: 100n,
+        participants: [{ userId: "player-a" }, { userId: "player-b" }],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "outsider",
+      }),
+    ).rejects.toMatchObject({ code: "WINNER_NOT_IN_MATCH" });
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+    expect(bracketHoist.advanceAfterTerminalMatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects settlement when a disputed match has no assigned players", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      playerAId: null,
+      playerBId: null,
+      awardsTournamentPrize: false,
+      tournament: {
+        entryFee: 100n,
+        participants: [{ userId: "player-a" }, { userId: "player-b" }],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "player-a",
+      }),
+    ).rejects.toMatchObject({ code: "WINNER_NOT_IN_MATCH" });
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+    expect(bracketHoist.advanceAfterTerminalMatch).not.toHaveBeenCalled();
+  });
+
   it("locks match, updates wallets, ledger, outbox, and sets SETTLED", async () => {
     txMocks = createTxMock();
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -132,6 +200,8 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      playerAId: "w1",
+      playerBId: "p2",
       awardsTournamentPrize: true,
       tournament: {
         entryFee: 100n,
@@ -180,6 +250,8 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      playerAId: "w1",
+      playerBId: "p2",
       awardsTournamentPrize: false,
       tournament: {
         entryFee: 100n,
@@ -220,6 +292,8 @@ describe("MatchSettlementService", () => {
           id: "m1",
           tournamentId: "t1",
           status: "DISPUTED",
+          playerAId: "w1",
+          playerBId: "p2",
           awardsTournamentPrize: true,
           tournament: {
             entryFee: 100n,
