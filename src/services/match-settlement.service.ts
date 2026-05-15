@@ -24,6 +24,18 @@ type LockedMatchRow = {
   tournamentId: string;
 };
 
+function assertWinnerBelongsToMatch(
+  match: { playerAId: string | null; playerBId: string | null },
+  finalWinnerId: string,
+): void {
+  const allowed = [match.playerAId, match.playerBId].filter(
+    (id): id is string => typeof id === "string" && id.length > 0,
+  );
+  if (allowed.length === 0 || !allowed.includes(finalWinnerId)) {
+    throw new MatchSettlementError("WINNER_NOT_IN_MATCH");
+  }
+}
+
 export type SettleDisputedMatchResult = {
   matchId: string;
   status: "SETTLED";
@@ -90,6 +102,7 @@ export class MatchSettlementService {
             if (!match?.tournament) {
               throw new Error("CRITICAL: Brak danych do rozliczenia.");
             }
+            assertWinnerBelongsToMatch(match, finalWinnerId);
 
             const t = match.tournament;
             const participantsCount = BigInt(t.participants.length);

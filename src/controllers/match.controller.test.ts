@@ -408,6 +408,33 @@ describe("MatchController.resolveDispute", () => {
     errSpy.mockRestore();
   });
 
+  it("rejects settled matches without running another payout", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "SETTLED",
+      winnerId: "old",
+      playerAId: "winner-1",
+      playerBId: "loser-1",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "winner-1" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   it("returns 400 when final winner is not an assigned player", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",
@@ -432,12 +459,41 @@ describe("MatchController.resolveDispute", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 400 when a disputed match has no assigned players", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      winnerId: null,
+      playerAId: null,
+      playerBId: null,
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "winner-1" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   it("returns 200 and runs payout in same tx", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
       winnerId: null,
+      playerAId: "winner-1",
+      playerBId: "loser-1",
     });
     h.matchUpdate.mockResolvedValue({});
     const res = mockRes();
@@ -479,6 +535,8 @@ describe("MatchController.resolveDispute", () => {
       tournamentId: "t1",
       status: "DISPUTED",
       winnerId: null,
+      playerAId: "winner-1",
+      playerBId: "loser-1",
     });
     h.matchUpdate.mockResolvedValue({});
     const res = mockRes();

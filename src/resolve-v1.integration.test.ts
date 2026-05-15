@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
-import type { PrismaClient } from "@prisma/client";
+import { UserRole, type PrismaClient } from "@prisma/client";
 import { MatchSettlementError } from "./services/match-settlement.service.js";
 import { createApp } from "./create-app.js";
 import type { WebSocketService } from "./services/websocket.service.js";
@@ -108,9 +108,74 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
     });
   });
 
-  function token(): string {
-    return jwt.sign({ userId: "arbiter-1" }, JWT_SECRET);
+  function token(role = UserRole.ADMIN): string {
+    return jwt.sign({ userId: "arbiter-1", role }, JWT_SECRET);
   }
+
+  it("rejects player JWTs before v1 dispute settlement", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/v1/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${token(UserRole.PLAYER)}`)
+      .set("Idempotency-Key", "player-denied")
+      .send({ finalWinnerId: "winner-1" });
+
+    expect(res.status).toBe(403);
+    expect(settleDisputedMatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects player JWTs before legacy dispute settlement", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${token(UserRole.PLAYER)}`)
+      .send({ finalWinnerId: "winner-1" });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects player JWTs before direct wallet deposit minting", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/wallet/deposit")
+      .set("Authorization", `Bearer ${token(UserRole.PLAYER)}`)
+      .send({ amount: "1000000", referenceId: "fabricated-deposit" });
+
+    expect(res.status).toBe(403);
+  });
 
   it("50 concurrent same matchId with distinct Idempotency-Key: one 200 and one settlement", async () => {
     const redis = new FakeRedis() as unknown as import("ioredis").default;
