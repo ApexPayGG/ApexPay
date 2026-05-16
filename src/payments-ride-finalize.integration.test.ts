@@ -95,6 +95,29 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      get: vi.fn().mockResolvedValue("done"),
+      del: vi.fn().mockResolvedValue(1),
+    } as unknown as Redis;
+  }
+
+  function makeStatefulRedis(): Redis {
+    const store = new Map<string, string>();
+    return {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockImplementation(
+        async (key: string, value: string, _mode: string, _ttl: number, condition?: string) => {
+          if (condition === "NX" && store.has(key)) {
+            return null;
+          }
+          if (condition === "XX" && !store.has(key)) {
+            return null;
+          }
+          store.set(key, value);
+          return "OK";
+        },
+      ),
+      get: vi.fn().mockImplementation(async (key: string) => store.get(key) ?? null),
+      del: vi.fn().mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0)),
     } as unknown as Redis;
   }
 
@@ -173,6 +196,31 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       .send(payload);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+  });
+
+  it("zwalnia idempotency reservation po błędzie, aby retry mógł rozliczyć przejazd", async () => {
+    vi.unstubAllEnvs();
+    const redis = makeStatefulRedis();
+    const { prisma } = buildContext();
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
+
+    const first = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(first.status).toBe(503);
+    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
+
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const second = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(second.status).toBe(201);
+    expect(second.body).toMatchObject({ duplicate: false, rideId: "ride_1" });
+    vi.unstubAllEnvs();
   });
 
   it("201 gdy pay-in był wcześniej (saldo pasażera = 0) — skip debetu pasażera, credity wykonane", async () => {
