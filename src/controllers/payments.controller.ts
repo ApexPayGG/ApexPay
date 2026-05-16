@@ -30,6 +30,10 @@ const rideFinalizeBodySchema = z
   })
   .strict();
 
+const RIDE_FINALIZE_IDEMPOTENCY_TTL_SECONDS = 86_400;
+const RIDE_FINALIZE_IDEMPOTENCY_PROCESSING = "processing";
+const RIDE_FINALIZE_IDEMPOTENCY_DONE = "done";
+
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
 }
@@ -93,6 +97,7 @@ export class PaymentsController {
 
   async rideFinalize(req: Request, res: Response): Promise<void> {
     const userId = req.user?.id?.trim();
+    let reservedIdempotencyKey: string | null = null;
     if (userId === undefined || userId.length === 0) {
       res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
       return;
@@ -110,14 +115,30 @@ export class PaymentsController {
       }
 
       const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      const idemSet = await this.redis.set(
+        idempotencyKey,
+        RIDE_FINALIZE_IDEMPOTENCY_PROCESSING,
+        "EX",
+        RIDE_FINALIZE_IDEMPOTENCY_TTL_SECONDS,
+        "NX",
+      );
       if (idemSet === null) {
-        res.status(200).json({
+        const idemState = await this.redis.get(idempotencyKey);
+        if (idemState === RIDE_FINALIZE_IDEMPOTENCY_DONE || idemState === "1") {
+          res.status(200).json({
+            rideId: body.ride_id,
+            duplicate: true,
+          });
+          return;
+        }
+        res.status(409).json({
           rideId: body.ride_id,
-          duplicate: true,
+          code: "IDEMPOTENCY_IN_PROGRESS",
+          error: "Rozliczenie przejazdu jest już przetwarzane.",
         });
         return;
       }
+      reservedIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -132,6 +153,21 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      reservedIdempotencyKey = null;
+      try {
+        const doneSet = await this.redis.set(
+          idempotencyKey,
+          RIDE_FINALIZE_IDEMPOTENCY_DONE,
+          "EX",
+          RIDE_FINALIZE_IDEMPOTENCY_TTL_SECONDS,
+          "XX",
+        );
+        if (doneSet !== "OK") {
+          console.error("[payments/ride-finalize] failed to mark idempotency key as done");
+        }
+      } catch (redisErr) {
+        console.error("[payments/ride-finalize] failed to mark idempotency key as done:", redisErr);
+      }
 
       res.status(201).json({
         rideId: result.rideId,
@@ -141,6 +177,13 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (reservedIdempotencyKey !== null) {
+        try {
+          await this.redis.del(reservedIdempotencyKey);
+        } catch (redisErr) {
+          console.error("[payments/ride-finalize] failed to release idempotency key:", redisErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
