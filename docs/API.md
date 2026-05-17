@@ -43,7 +43,7 @@ Base URL produkcji: `https://api.apexpay.pl`. Wiele tras jest zdublowanych pod *
 | GET | `/api/v1/wallet/me`, `/api/wallet/me` | tak | Saldo: `walletId`, `balance`, `updatedAt`. |
 | POST | `/api/v1/wallet/transfer`, `/api/wallet/transfer` | tak | **P2P**: `{ "toUserId", "amount" (string cyfr), "referenceId" }`. Idempotentnie po `referenceId` (wewnętrznie `p2p:{ref}:out` / `:in`). |
 | POST | `/api/v1/wallet/fund`, `/api/wallet/fund` | **ADMIN** | Zasilenie: `{ "targetUserId", "amount" }` + wpis `Transaction` `DEPOSIT` (`admin-fund-…`). |
-| POST | `/api/wallet/deposit` | tak | Wpłata zewnętrzna (`amount`, `referenceId`). |
+| POST | `/api/wallet/deposit` | **ADMIN** | Legacy ręczne księgowanie wpłaty (`amount`, `referenceId`). Użytkownicy końcowi wpłacają przez PSP/Autopay. |
 | POST | `/api/wallet/charge` | tak | Opłata (`amount`, `referenceId`). |
 
 ## Klucze API (integrator)
