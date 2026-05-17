@@ -38,7 +38,7 @@ Content-Type: application/json
   "password": "{{password}}"
 }
 
-### 2. Wpłać depozyt (100 PLN = 10000 groszy)
+### 2. Legacy ręczny depozyt (ADMIN; 100 PLN = 10000 groszy)
 POST {{baseUrl}}/wallet/deposit
 Content-Type: application/json
 Authorization: Bearer {{token}}

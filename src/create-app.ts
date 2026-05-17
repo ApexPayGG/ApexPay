@@ -398,9 +398,14 @@ export function createApp(options: CreateAppOptions): {
     adminRouter,
   );
 
-  app.post("/api/wallet/deposit", authMiddleware, (req, res) => {
-    void walletController.deposit(req as never, res as never);
-  });
+  app.post(
+    "/api/wallet/deposit",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    (req, res) => {
+      void walletController.deposit(req as never, res as never);
+    },
+  );
 
   app.post("/api/wallet/charge", authMiddleware, (req, res) => {
     void walletController.chargeEntryFee(req as never, res as never);
