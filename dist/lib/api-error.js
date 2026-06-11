@@ -8,6 +8,7 @@ export const ApiErrorCode = {
     CONFLICT: "CONFLICT",
     PAYMENT_REQUIRED: "PAYMENT_REQUIRED",
     TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
+    SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
     INTERNAL: "INTERNAL_ERROR",
 };
 export function sendApiError(res, status, code, message) {
