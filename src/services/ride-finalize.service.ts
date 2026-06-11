@@ -8,6 +8,7 @@ import {
 import type { Request } from "express";
 import { AuditActorType } from "@prisma/client";
 import type { AuditLogService } from "./audit-log.service.js";
+import { findDurableRideFinalizeDuplicateInTx } from "./ride-finalize-duplicate.service.js";
 import { InsufficientFundsError } from "./wallet.service.js";
 
 export type RideFinalizeInput = {
@@ -27,6 +28,7 @@ export type RideFinalizeResult = {
   driverPayout: number;
   platformCommission: number;
   tip: number;
+  idempotent: boolean;
 };
 
 export class RideFinalizeConfigError extends Error {
@@ -92,31 +94,15 @@ export class RideFinalizeService {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
         }
         if (ride.status === SafeTaxiRideStatus.SETTLED) {
-          const connectedAccount = await tx.connectedAccount.findUnique({
-            where: { id: input.driverConnectedAccountId },
-            select: { userId: true, integratorUserId: true, status: true },
-          });
-          if (
-            connectedAccount === null ||
-            connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
-            connectedAccount.userId !== ride.driverId ||
-            connectedAccount.integratorUserId !== input.integratorUserId
-          ) {
-            throw new RideFinalizeForbiddenError("Brak dostępu do rozliczenia przejazdu.");
-          }
-          const passengerDebit = await tx.transaction.findUnique({
-            where: { referenceId: `ride:${rideId}:debit` },
-            select: { id: true },
-          });
-          if (passengerDebit === null) {
-            throw new RideFinalizeInvalidStateError("Przejazd ma niespójny stan rozliczenia.");
-          }
-          return {
+          const duplicate = await findDurableRideFinalizeDuplicateInTx(tx, {
             rideId,
-            driverPayout: Number(ride.driverPayoutCents ?? 0n),
-            platformCommission: Number(ride.platformCommissionCents ?? 0n),
-            tip: 0,
-          };
+            driverConnectedAccountId: input.driverConnectedAccountId,
+            integratorUserId: input.integratorUserId,
+          });
+          if (duplicate !== null) {
+            return duplicate;
+          }
+          throw new RideFinalizeInvalidStateError("Przejazd ma niespójny stan rozliczenia.");
         }
         if (ride.status !== SafeTaxiRideStatus.CREATED) {
           throw new RideFinalizeInvalidStateError("Przejazd nie oczekuje na rozliczenie.");
@@ -273,6 +259,7 @@ export class RideFinalizeService {
           driverPayout: input.driverBasePayoutGrosze + input.tipAmountGrosze,
           platformCommission: input.platformCommissionGrosze,
           tip: input.tipAmountGrosze,
+          idempotent: false,
         };
       },
       {

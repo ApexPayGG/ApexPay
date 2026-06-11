@@ -17,6 +17,7 @@ export type RideFinalizeResult = {
     driverPayout: number;
     platformCommission: number;
     tip: number;
+    idempotent: boolean;
 };
 export declare class RideFinalizeConfigError extends Error {
     constructor(message: string);

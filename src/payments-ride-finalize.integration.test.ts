@@ -28,6 +28,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     connectedAccountIntegratorUserId?: string;
     rideStatus?: SafeTaxiRideStatus;
     debitExists?: boolean;
+    tipExists?: boolean;
   }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
     const rideDriverId = opts?.rideDriverId ?? "driver_user_1";
@@ -36,6 +37,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       opts?.connectedAccountIntegratorUserId ?? integratorUserId;
     const rideStatus = opts?.rideStatus ?? SafeTaxiRideStatus.CREATED;
     const debitExists = opts?.debitExists ?? false;
+    const tipExists = opts?.tipExists ?? false;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
     const tx = {
       safeTaxiRide: {
@@ -85,6 +87,9 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         findUnique: vi.fn().mockImplementation((args: { where: { referenceId: string } }) => {
           if (args.where.referenceId === "ride:ride_1:debit" && debitExists) {
             return Promise.resolve({ id: "tx_debit" });
+          }
+          if (args.where.referenceId === "ride:ride_1:tip" && tipExists) {
+            return Promise.resolve({ id: "tx_tip", amount: 50n });
           }
           return Promise.resolve(null);
         }),
@@ -217,18 +222,30 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("200 duplicate:true dla duplikatu ride_id", async () => {
+  it.each([
+    ["Redis marker istnieje", null],
+    ["Redis wygasł, ale DB pokazuje utrwalone rozliczenie", "OK"],
+  ] as Array<[string, "OK" | null]>)("200 duplicate:true gdy %s", async (_label, redisSetResult) => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
     const { prisma } = buildContext({
       rideStatus: SafeTaxiRideStatus.SETTLED,
       debitExists: true,
+      tipExists: true,
     });
-    const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
+    const { app } = createApp({ prisma, redis: makeRedis(redisSetResult), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+    expect(res.body).toMatchObject({
+      duplicate: true,
+      rideId: "ride_1",
+      driverPayout: 850,
+      platformCommission: 200,
+      tip: 50,
+    });
+    vi.unstubAllEnvs();
   });
 
   it("402 gdy pasażer nie pokrywa taryfy z napiwkiem — bez creditów i z odblokowaniem retry", async () => {

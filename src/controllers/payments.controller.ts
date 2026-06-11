@@ -162,12 +162,12 @@ export class PaymentsController {
         console.error("[payments/ride-finalize] redis done marker failed", err);
       });
 
-      res.status(201).json({
+      res.status(result.idempotent ? 200 : 201).json({
         rideId: result.rideId,
         driverPayout: result.driverPayout,
         platformCommission: result.platformCommission,
         tip: result.tip,
-        duplicate: false,
+        duplicate: result.idempotent,
       });
     } catch (err) {
       if (err instanceof ZodError) {
