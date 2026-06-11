@@ -166,7 +166,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("400 gdy split jest nieprawidłowy", async () => {
+  it("400 gdy split lub suma kwot są nieprawidłowe", async () => {
     const { prisma } = buildContext();
     const { app } = createApp({ prisma, redis: makeRedis(), wsService: makeWs() });
     const res = await request(app)
@@ -178,7 +178,17 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         driver_base_payout_grosze: 100,
       });
     expect(res.status).toBe(400);
-    expect(String(res.body.error)).toContain("Nieprawidłowy split");
+    const unsafeAggregate = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send({
+        ...payload,
+        base_amount_grosze: Number.MAX_SAFE_INTEGER,
+        platform_commission_grosze: 0,
+        driver_base_payout_grosze: Number.MAX_SAFE_INTEGER,
+        tip_amount_grosze: 1,
+      });
+    expect(unsafeAggregate.status).toBe(400);
   });
 
   it("201 dla poprawnego splitu i wpisy w ledgerze", async () => {

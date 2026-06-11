@@ -38,6 +38,11 @@ function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
 }
 
+function safeIntegerSum(...values: number[]): number | null {
+  const total = values.reduce((acc, value) => acc + value, 0);
+  return Number.isSafeInteger(total) ? total : null;
+}
+
 export class PaymentsController {
   constructor(
     private readonly autopayService: AutopayService,
@@ -108,10 +113,26 @@ export class PaymentsController {
 
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
-      if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
+      const splitTotal = safeIntegerSum(
+        body.platform_commission_grosze,
+        body.driver_base_payout_grosze,
+      );
+      const passengerTotal = safeIntegerSum(body.base_amount_grosze, body.tip_amount_grosze);
+      const driverTotal = safeIntegerSum(
+        body.driver_base_payout_grosze,
+        body.tip_amount_grosze,
+      );
+      if (splitTotal === null || splitTotal !== body.base_amount_grosze) {
         res.status(400).json({
           error:
             "Nieprawidłowy split: platform_commission_grosze + driver_base_payout_grosze musi równać się base_amount_grosze.",
+          code: "BAD_REQUEST",
+        });
+        return;
+      }
+      if (passengerTotal === null || driverTotal === null) {
+        res.status(400).json({
+          error: "Suma kwot rozliczenia przekracza bezpieczny zakres.",
           code: "BAD_REQUEST",
         });
         return;
