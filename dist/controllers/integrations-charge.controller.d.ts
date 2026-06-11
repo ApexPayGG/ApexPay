@@ -6,6 +6,7 @@ export declare class IntegrationsChargeController {
     private readonly redis;
     constructor(marketplaceChargeService: MarketplaceChargeService, redis: Redis);
     listCharges(req: Request, res: Response): Promise<void>;
+    exportCharges(req: Request, res: Response): Promise<void>;
     createCharge(req: Request, res: Response): Promise<void>;
 }
 //# sourceMappingURL=integrations-charge.controller.d.ts.map

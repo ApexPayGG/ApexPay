@@ -6,6 +6,7 @@ export declare class IntegrationsPayoutController {
     private readonly redis;
     constructor(payoutService: PayoutService, redis: Redis);
     listPayouts(req: Request, res: Response): Promise<void>;
+    exportPayouts(req: Request, res: Response): Promise<void>;
     create(req: Request, res: Response): Promise<void>;
 }
 //# sourceMappingURL=integrations-payout.controller.d.ts.map

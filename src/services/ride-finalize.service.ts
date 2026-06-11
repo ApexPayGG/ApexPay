@@ -1,7 +1,14 @@
-import { Prisma, TransactionType as TxType, type PrismaClient } from "@prisma/client";
+import {
+  ConnectedAccountStatus,
+  Prisma,
+  SafeTaxiRideStatus,
+  TransactionType as TxType,
+  type PrismaClient,
+} from "@prisma/client";
 import type { Request } from "express";
 import { AuditActorType } from "@prisma/client";
 import type { AuditLogService } from "./audit-log.service.js";
+import { InsufficientFundsError } from "./wallet.service.js";
 
 export type RideFinalizeInput = {
   rideId: string;
@@ -12,6 +19,7 @@ export type RideFinalizeInput = {
   tipSettlement: string;
   passengerRatingStars?: number;
   driverConnectedAccountId: string;
+  integratorUserId: string;
 };
 
 export type RideFinalizeResult = {
@@ -32,6 +40,20 @@ export class RideFinalizeNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "RideFinalizeNotFoundError";
+  }
+}
+
+export class RideFinalizeForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RideFinalizeForbiddenError";
+  }
+}
+
+export class RideFinalizeInvalidStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RideFinalizeInvalidStateError";
   }
 }
 
@@ -57,18 +79,65 @@ export class RideFinalizeService {
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: {
+            id: true,
+            passengerId: true,
+            driverId: true,
+            status: true,
+            platformCommissionCents: true,
+            driverPayoutCents: true,
+          },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
         }
+        if (ride.status === SafeTaxiRideStatus.SETTLED) {
+          const connectedAccount = await tx.connectedAccount.findUnique({
+            where: { id: input.driverConnectedAccountId },
+            select: { userId: true, integratorUserId: true, status: true },
+          });
+          if (
+            connectedAccount === null ||
+            connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+            connectedAccount.userId !== ride.driverId ||
+            connectedAccount.integratorUserId !== input.integratorUserId
+          ) {
+            throw new RideFinalizeForbiddenError("Brak dostępu do rozliczenia przejazdu.");
+          }
+          const passengerDebit = await tx.transaction.findUnique({
+            where: { referenceId: `ride:${rideId}:debit` },
+            select: { id: true },
+          });
+          if (passengerDebit === null) {
+            throw new RideFinalizeInvalidStateError("Przejazd ma niespójny stan rozliczenia.");
+          }
+          return {
+            rideId,
+            driverPayout: Number(ride.driverPayoutCents ?? 0n),
+            platformCommission: Number(ride.platformCommissionCents ?? 0n),
+            tip: 0,
+          };
+        }
+        if (ride.status !== SafeTaxiRideStatus.CREATED) {
+          throw new RideFinalizeInvalidStateError("Przejazd nie oczekuje na rozliczenie.");
+        }
 
         const connectedAccount = await tx.connectedAccount.findUnique({
           where: { id: input.driverConnectedAccountId },
-          select: { id: true, userId: true, integratorUserId: true },
+          select: { id: true, userId: true, integratorUserId: true, status: true },
         });
-        if (connectedAccount === null || connectedAccount.userId === null) {
+        if (
+          connectedAccount === null ||
+          connectedAccount.userId === null ||
+          connectedAccount.status !== ConnectedAccountStatus.ACTIVE
+        ) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (connectedAccount.integratorUserId !== input.integratorUserId) {
+          throw new RideFinalizeForbiddenError("Subkonto kierowcy nie należy do integratora.");
+        }
+        if (connectedAccount.userId !== ride.driverId) {
+          throw new RideFinalizeForbiddenError("Subkonto nie należy do kierowcy przejazdu.");
         }
 
         const [passengerWallet, driverWallet, platformWallet] = await Promise.all([
@@ -94,22 +163,23 @@ export class RideFinalizeService {
         const driverAmount = BigInt(input.driverBasePayoutGrosze);
         const platformAmount = BigInt(input.platformCommissionGrosze);
         const tipAmount = BigInt(input.tipAmountGrosze);
+        const passengerDebitAmount = baseAmount + tipAmount;
 
-        // Jeśli saldo pasażera nie pokrywa kwoty, zakładamy że pay-in był już zaksięgowany poza tym krokiem.
-        if (passengerWallet.balance >= baseAmount) {
-          await tx.wallet.update({
-            where: { id: passengerWallet.id },
-            data: { balance: { decrement: baseAmount } },
-          });
-          await tx.transaction.create({
-            data: {
-              walletId: passengerWallet.id,
-              amount: -baseAmount,
-              referenceId: `ride:${rideId}:debit`,
-              type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
-            },
-          });
+        const passengerDebit = await tx.wallet.updateMany({
+          where: { id: passengerWallet.id, balance: { gte: passengerDebitAmount } },
+          data: { balance: { decrement: passengerDebitAmount } },
+        });
+        if (passengerDebit.count !== 1) {
+          throw new InsufficientFundsError();
         }
+        await tx.transaction.create({
+          data: {
+            walletId: passengerWallet.id,
+            amount: -passengerDebitAmount,
+            referenceId: `ride:${rideId}:debit`,
+            type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
+          },
+        });
 
         await tx.wallet.update({
           where: { id: driverWallet.id },
@@ -184,6 +254,17 @@ export class RideFinalizeService {
               platformCommission: input.platformCommissionGrosze,
               tip: input.tipAmountGrosze,
             },
+          },
+        });
+
+        await tx.safeTaxiRide.update({
+          where: { id: rideId },
+          data: {
+            status: SafeTaxiRideStatus.SETTLED,
+            fareCents: passengerDebitAmount,
+            platformCommissionCents: platformAmount,
+            driverPayoutCents: driverAmount + tipAmount,
+            settledAt: new Date(),
           },
         });
 

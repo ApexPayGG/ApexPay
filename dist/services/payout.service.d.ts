@@ -18,6 +18,7 @@ export type IntegrationPayoutListItem = {
     amount: bigint;
     currency: string;
     status: PayoutStatus;
+    pspReferenceId: string | null;
     createdAt: Date;
     connectedAccountId: string;
     connectedAccountEmail: string;

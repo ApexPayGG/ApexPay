@@ -1,5 +1,8 @@
 import { z, ZodError } from "zod";
 import { AutopayService } from "../services/autopay.service.js";
+import { RideFinalizeConfigError, RideFinalizeForbiddenError, RideFinalizeInvalidStateError, RideFinalizeNotFoundError, RideFinalizeService, } from "../services/ride-finalize.service.js";
+import { findDurableRideFinalizeDuplicate } from "../services/ride-finalize-duplicate.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 const bodySchema = z
     .object({
     amount: z.number().int().positive(),
@@ -7,12 +10,31 @@ const bodySchema = z
     description: z.string().trim().min(1).max(255),
 })
     .strict();
+const rideFinalizeBodySchema = z
+    .object({
+    ride_id: z.string().trim().min(1),
+    base_amount_grosze: z.number().int().positive(),
+    platform_commission_grosze: z.number().int().min(0),
+    driver_base_payout_grosze: z.number().int().min(0),
+    tip_amount_grosze: z.number().int().min(0).default(0),
+    tip_settlement: z.string().trim().min(1).default("CREDIT_CONNECTED_ACCOUNT"),
+    passenger_rating_stars: z.number().int().min(1).max(5).optional(),
+    driver_connected_account_id: z.string().trim().min(1),
+})
+    .strict();
+function isAutopayConfigError(err) {
+    return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
+}
 export class PaymentsController {
     autopayService;
     prisma;
-    constructor(autopayService, prisma) {
+    rideFinalizeService;
+    redis;
+    constructor(autopayService, prisma, rideFinalizeService, redis) {
         this.autopayService = autopayService;
         this.prisma = prisma;
+        this.rideFinalizeService = rideFinalizeService;
+        this.redis = redis;
     }
     async initiate(req, res) {
         const userId = req.user?.id?.trim();
@@ -49,9 +71,128 @@ export class PaymentsController {
                 res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
                 return;
             }
+            if (isAutopayConfigError(err)) {
+                res.status(503).json({
+                    error: "Brak konfiguracji Autopay na serwerze.",
+                    code: "AUTOPAY_NOT_CONFIGURED",
+                });
+                return;
+            }
             console.error("[payments/initiate]", err);
             res.status(500).json({ error: "Internal server error" });
         }
+    }
+    async rideFinalize(req, res) {
+        const userId = req.user?.id?.trim();
+        if (userId === undefined || userId.length === 0) {
+            res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+            return;
+        }
+        let idempotencyKey;
+        let reservationCreated = false;
+        let settlementCommitted = false;
+        try {
+            const body = rideFinalizeBodySchema.parse(req.body);
+            if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
+                res.status(400).json({
+                    error: "Nieprawidłowy split: platform_commission_grosze + driver_base_payout_grosze musi równać się base_amount_grosze.",
+                    code: "BAD_REQUEST",
+                });
+                return;
+            }
+            idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+            const idemSet = await this.redis.set(idempotencyKey, "processing", "EX", 86400, "NX");
+            if (idemSet === null) {
+                const duplicate = await findDurableRideFinalizeDuplicate(this.prisma, {
+                    rideId: body.ride_id,
+                    driverConnectedAccountId: body.driver_connected_account_id,
+                    integratorUserId: userId,
+                });
+                if (duplicate === null) {
+                    res.status(409).json({
+                        error: "Rozliczenie przejazdu jest w toku albo poprzednia próba nie została utrwalona.",
+                        code: "CONFLICT",
+                    });
+                    return;
+                }
+                res.status(200).json({
+                    rideId: duplicate.rideId,
+                    driverPayout: duplicate.driverPayout,
+                    platformCommission: duplicate.platformCommission,
+                    tip: duplicate.tip,
+                    duplicate: true,
+                });
+                return;
+            }
+            reservationCreated = true;
+            const finalizeInput = {
+                rideId: body.ride_id,
+                baseAmountGrosze: body.base_amount_grosze,
+                platformCommissionGrosze: body.platform_commission_grosze,
+                driverBasePayoutGrosze: body.driver_base_payout_grosze,
+                tipAmountGrosze: body.tip_amount_grosze,
+                tipSettlement: body.tip_settlement,
+                driverConnectedAccountId: body.driver_connected_account_id,
+                integratorUserId: userId,
+                ...(body.passenger_rating_stars !== undefined
+                    ? { passengerRatingStars: body.passenger_rating_stars }
+                    : {}),
+            };
+            const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+            settlementCommitted = true;
+            await this.redis.set(idempotencyKey, "done", "EX", 86400).catch((err) => {
+                console.error("[payments/ride-finalize] redis done marker failed", err);
+            });
+            res.status(201).json({
+                rideId: result.rideId,
+                driverPayout: result.driverPayout,
+                platformCommission: result.platformCommission,
+                tip: result.tip,
+                duplicate: false,
+            });
+        }
+        catch (err) {
+            if (err instanceof ZodError) {
+                res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
+                return;
+            }
+            if (err instanceof InsufficientFundsError) {
+                await this.releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted);
+                res.status(402).json({ error: "Niewystarczające środki pasażera.", code: "PAYMENT_REQUIRED" });
+                return;
+            }
+            if (err instanceof RideFinalizeForbiddenError) {
+                await this.releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted);
+                res.status(403).json({ error: err.message, code: "FORBIDDEN" });
+                return;
+            }
+            if (err instanceof RideFinalizeInvalidStateError) {
+                await this.releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted);
+                res.status(409).json({ error: err.message, code: "CONFLICT" });
+                return;
+            }
+            if (err instanceof RideFinalizeNotFoundError) {
+                await this.releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted);
+                res.status(404).json({ error: err.message, code: "NOT_FOUND" });
+                return;
+            }
+            if (err instanceof RideFinalizeConfigError) {
+                await this.releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted);
+                res.status(503).json({ error: err.message, code: "SERVICE_UNAVAILABLE" });
+                return;
+            }
+            await this.releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted);
+            console.error("[payments/ride-finalize]", err);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    }
+    async releaseRideFinalizeReservation(idempotencyKey, reservationCreated, settlementCommitted) {
+        if (!reservationCreated || settlementCommitted || idempotencyKey === undefined) {
+            return;
+        }
+        await this.redis.del(idempotencyKey).catch((err) => {
+            console.error("[payments/ride-finalize] redis reservation release failed", err);
+        });
     }
 }
 //# sourceMappingURL=payments.controller.js.map
