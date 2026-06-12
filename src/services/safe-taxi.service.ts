@@ -6,6 +6,7 @@ import {
   TransactionType as TxType,
 } from "@prisma/client";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletByUserIdIfFunded } from "../lib/wallet-debit.js";
 import { InsufficientFundsError, WalletNotFoundError } from "./wallet.service.js";
 
 export class SafeTaxiConfigError extends Error {
@@ -352,10 +353,10 @@ export class SafeTaxiService {
         }
 
         try {
-          await tx.wallet.update({
-            where: { userId: ride.passengerId },
-            data: { balance: { decrement: fareCents } },
-          });
+          const debited = await debitWalletByUserIdIfFunded(tx, ride.passengerId, fareCents);
+          if (!debited) {
+            throw new InsufficientFundsError();
+          }
         } catch (err) {
           if (isInsufficientFundsDbError(err)) {
             throw new InsufficientFundsError();

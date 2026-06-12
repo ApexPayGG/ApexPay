@@ -11,6 +11,7 @@ import type { Redis } from "ioredis";
 import { z } from "zod";
 import { contextLogger } from "../lib/logger.js";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletByUserIdIfFunded } from "../lib/wallet-debit.js";
 import type { AuditLogService } from "./audit-log.service.js";
 import { InsufficientFundsError, WalletNotFoundError } from "./wallet.service.js";
 
@@ -157,10 +158,14 @@ export class DisputeService {
           }
 
           try {
-            await tx.wallet.update({
-              where: { userId: charge.integratorUserId },
-              data: { balance: { decrement: amount } },
-            });
+            const debited = await debitWalletByUserIdIfFunded(
+              tx,
+              charge.integratorUserId,
+              amount,
+            );
+            if (!debited) {
+              throw new InsufficientFundsError();
+            }
           } catch (err) {
             if (isInsufficientFundsDbError(err)) {
               throw new InsufficientFundsError();

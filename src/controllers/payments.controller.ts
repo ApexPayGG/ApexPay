@@ -1,13 +1,17 @@
 import type { Request, Response } from "express";
 import type { PrismaClient } from "@prisma/client";
+import { ConnectedAccountStatus, SafeTaxiRideStatus } from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
+  RideFinalizeAuthorizationError,
   RideFinalizeConfigError,
+  RideFinalizeInvalidStateError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -98,6 +102,19 @@ export class PaymentsController {
       return;
     }
 
+    let reservedIdempotencyKey: string | null = null;
+    const releaseReservation = async (): Promise<void> => {
+      if (reservedIdempotencyKey === null) {
+        return;
+      }
+      try {
+        await this.redis.del(reservedIdempotencyKey);
+      } catch (err) {
+        console.error("[payments/ride-finalize] failed to release idempotency key:", err);
+      } finally {
+        reservedIdempotencyKey = null;
+      }
+    };
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -112,12 +129,41 @@ export class PaymentsController {
       const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
+        const [ride, debit] = await Promise.all([
+          this.prisma.safeTaxiRide.findUnique({
+            where: { id: body.ride_id },
+            select: { status: true, driverId: true },
+          }),
+          this.prisma.transaction.findUnique({
+            where: { referenceId: `ride:${body.ride_id}:debit` },
+            select: { id: true },
+          }),
+        ]);
+        const connectedAccount = await this.prisma.connectedAccount.findUnique({
+          where: { id: body.driver_connected_account_id },
+          select: { userId: true, integratorUserId: true, status: true },
+        });
+        if (
+          ride?.status !== SafeTaxiRideStatus.SETTLED ||
+          debit === null ||
+          connectedAccount === null ||
+          connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+          connectedAccount.integratorUserId !== userId ||
+          connectedAccount.userId !== ride.driverId
+        ) {
+          res.status(409).json({
+            error: "Ride finalization is still processing or the previous attempt did not commit.",
+            code: "IDEMPOTENCY_IN_PROGRESS",
+          });
+          return;
+        }
         res.status(200).json({
           rideId: body.ride_id,
           duplicate: true,
         });
         return;
       }
+      reservedIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -127,11 +173,17 @@ export class PaymentsController {
         tipAmountGrosze: body.tip_amount_grosze,
         tipSettlement: body.tip_settlement,
         driverConnectedAccountId: body.driver_connected_account_id,
+        integratorUserId: userId,
         ...(body.passenger_rating_stars !== undefined
           ? { passengerRatingStars: body.passenger_rating_stars }
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      try {
+        await this.redis.set(idempotencyKey, "done", "EX", 86400);
+      } catch (err) {
+        console.error("[payments/ride-finalize] failed to mark idempotency done:", err);
+      }
 
       res.status(201).json({
         rideId: result.rideId,
@@ -146,13 +198,31 @@ export class PaymentsController {
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {
+        await releaseReservation();
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
         return;
       }
       if (err instanceof RideFinalizeConfigError) {
+        await releaseReservation();
         res.status(503).json({ error: err.message, code: "SERVICE_UNAVAILABLE" });
         return;
       }
+      if (err instanceof RideFinalizeAuthorizationError) {
+        await releaseReservation();
+        res.status(403).json({ error: err.message, code: "FORBIDDEN" });
+        return;
+      }
+      if (err instanceof RideFinalizeInvalidStateError) {
+        await releaseReservation();
+        res.status(409).json({ error: err.message, code: "INVALID_RIDE_STATE" });
+        return;
+      }
+      if (err instanceof InsufficientFundsError) {
+        await releaseReservation();
+        res.status(402).json({ error: "Niewystarczające środki pasażera.", code: "INSUFFICIENT_FUNDS" });
+        return;
+      }
+      await releaseReservation();
       console.error("[payments/ride-finalize]", err);
       res.status(500).json({ error: "Internal server error" });
     }

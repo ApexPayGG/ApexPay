@@ -7,6 +7,7 @@ import {
   TransactionType,
   type TournamentStatus,
 } from "@prisma/client";
+import { debitWalletByUserIdIfFunded } from "../lib/wallet-debit.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined || databaseUrl.length === 0) {
@@ -192,10 +193,14 @@ export class TournamentController {
           }
 
           try {
-            await tx.wallet.update({
-              where: { userId: trimmedUserId },
-              data: { balance: { decrement: tournament.entryFee } },
-            });
+            const debited = await debitWalletByUserIdIfFunded(
+              tx,
+              trimmedUserId,
+              tournament.entryFee,
+            );
+            if (!debited) {
+              throw new Error("NO_FUNDS");
+            }
           } catch (err) {
             if (isInsufficientFundsDbError(err)) {
               throw new Error("NO_FUNDS");

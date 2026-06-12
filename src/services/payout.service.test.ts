@@ -110,7 +110,10 @@ describe("PayoutService.createPayout", () => {
       wallet: { findUnique: findUniqueWallet },
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
-          wallet: { update: vi.fn().mockResolvedValue({}) },
+          wallet: {
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            update: vi.fn().mockResolvedValue({}),
+          },
           transaction: { create: vi.fn().mockResolvedValue({}) },
           payout: {
             create: vi.fn().mockResolvedValue({

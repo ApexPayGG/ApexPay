@@ -15,6 +15,7 @@ import {
 } from "@prisma/client";
 import { contextLogger } from "../lib/logger.js";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletByUserIdIfFunded } from "../lib/wallet-debit.js";
 import type { AuditLogService } from "./audit-log.service.js";
 import {
   decodeCursor,
@@ -348,10 +349,14 @@ export class MarketplaceChargeService {
           }
 
           try {
-            await tx.wallet.update({
-              where: { userId: params.integratorUserId },
-              data: { balance: { decrement: params.amountCents } },
-            });
+            const debited = await debitWalletByUserIdIfFunded(
+              tx,
+              params.integratorUserId,
+              params.amountCents,
+            );
+            if (!debited) {
+              throw new InsufficientFundsError();
+            }
           } catch (err) {
             if (isInsufficientFundsDbError(err)) {
               throw new InsufficientFundsError();
@@ -652,10 +657,10 @@ export class MarketplaceChargeService {
         }
 
         try {
-          await tx.wallet.update({
-            where: { userId: debitUserId },
-            data: { balance: { decrement: amountCents } },
-          });
+          const debited = await debitWalletByUserIdIfFunded(tx, debitUserId, amountCents);
+          if (!debited) {
+            throw new InsufficientFundsError();
+          }
         } catch (err) {
           if (isInsufficientFundsDbError(err)) {
             throw new InsufficientFundsError();
