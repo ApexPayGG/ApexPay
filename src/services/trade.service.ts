@@ -6,6 +6,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletByUserIdIfFunded } from "../lib/wallet-debit.js";
 
 const PLATFORM_FEE_PERCENT = 3;
 
@@ -215,10 +216,10 @@ export class TradeService {
         }
 
         try {
-          await tx.wallet.update({
-            where: { userId: buyerId },
-            data: { balance: { decrement: trade.amountCents } },
-          });
+          const debited = await debitWalletByUserIdIfFunded(tx, buyerId, trade.amountCents);
+          if (!debited) {
+            throw new TradeInsufficientFundsError();
+          }
         } catch (err) {
           if (isInsufficientFundsDbError(err)) {
             throw new TradeInsufficientFundsError();

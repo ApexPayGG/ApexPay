@@ -23,6 +23,7 @@ import {
   type PaginatedSlice,
 } from "../lib/pagination.js";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletByUserIdIfFunded } from "../lib/wallet-debit.js";
 import {
   ConnectedAccountInactiveError,
   ConnectedAccountIntegratorMismatchError,
@@ -396,10 +397,10 @@ export class PayoutService {
       const created = await this.prisma.$transaction(
         async (tx) => {
           try {
-            await tx.wallet.update({
-              where: { userId: subjectUserId },
-              data: { balance: { decrement: params.amount } },
-            });
+            const debited = await debitWalletByUserIdIfFunded(tx, subjectUserId, params.amount);
+            if (!debited) {
+              throw new InsufficientFundsError();
+            }
           } catch (err) {
             if (isInsufficientFundsDbError(err)) {
               throw new InsufficientFundsError();

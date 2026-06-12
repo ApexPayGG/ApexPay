@@ -9,6 +9,7 @@ const h = vi.hoisted(() => {
   const tournamentParticipantCreate = vi.fn();
   const walletFindUnique = vi.fn();
   const walletUpdate = vi.fn();
+  const walletUpdateMany = vi.fn();
   const ledgerCreate = vi.fn();
   const matchCreateMany = vi.fn();
   const matchFindMany = vi.fn();
@@ -21,7 +22,7 @@ const h = vi.hoisted(() => {
       create: tournamentParticipantCreate,
     },
     match: { createMany: matchCreateMany, findMany: matchFindMany },
-    wallet: { findUnique: walletFindUnique, update: walletUpdate },
+    wallet: { findUnique: walletFindUnique, update: walletUpdate, updateMany: walletUpdateMany },
     transaction: { create: ledgerCreate },
   };
   const prismaTransaction = vi.fn(
@@ -36,6 +37,7 @@ const h = vi.hoisted(() => {
     tournamentParticipantCreate,
     walletFindUnique,
     walletUpdate,
+    walletUpdateMany,
     ledgerCreate,
     matchCreateMany,
     matchFindMany,
@@ -111,6 +113,7 @@ function resetJoinMocks() {
   h.matchFindMany.mockReset();
   h.walletFindUnique.mockReset();
   h.walletUpdate.mockReset();
+  h.walletUpdateMany.mockReset();
   h.ledgerCreate.mockReset();
   h.prismaTransaction.mockReset();
   h.prismaTransaction.mockImplementation(async (fn) => fn(h.mockTx));
@@ -304,7 +307,7 @@ describe("TournamentController.joinTournament", () => {
     h.tournamentFindUnique.mockResolvedValue(openTournament(3));
     h.tournamentParticipantFindUnique.mockResolvedValue(null);
     h.walletFindUnique.mockResolvedValue({ id: "w1" });
-    h.walletUpdate.mockResolvedValue({ id: "w1", balance: 0n });
+    h.walletUpdateMany.mockResolvedValue({ count: 1 });
     h.ledgerCreate.mockResolvedValue({ id: "tx1" });
     h.tournamentParticipantCreate.mockResolvedValue({ id: "ticket-xyz" });
 
@@ -317,8 +320,8 @@ describe("TournamentController.joinTournament", () => {
     );
 
     expect(h.prismaTransaction).toHaveBeenCalledTimes(1);
-    expect(h.walletUpdate).toHaveBeenCalledWith({
-      where: { userId: "u1" },
+    expect(h.walletUpdateMany).toHaveBeenCalledWith({
+      where: { userId: "u1", balance: { gte: 500n } },
       data: { balance: { decrement: 500n } },
     });
     expect(h.ledgerCreate).toHaveBeenCalledWith(

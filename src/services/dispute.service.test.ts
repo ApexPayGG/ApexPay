@@ -38,6 +38,7 @@ describe("DisputeService", () => {
     const outboxId = "wo_1";
 
     const walletUpdate = vi.fn().mockResolvedValue({ id: walletId, balance: 0n });
+    const walletUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
     const disputeCreate = vi.fn().mockResolvedValue({
       id: disputeId,
       chargeId,
@@ -68,6 +69,7 @@ describe("DisputeService", () => {
           wallet: {
             findUnique: vi.fn().mockResolvedValue({ id: walletId }),
             update: walletUpdate,
+            updateMany: walletUpdateMany,
           },
           dispute: { create: disputeCreate },
           transaction: { create: txCreate },

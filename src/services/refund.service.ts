@@ -13,6 +13,7 @@ import {
 } from "@prisma/client";
 import { contextLogger } from "../lib/logger.js";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletByIdIfFunded } from "../lib/wallet-debit.js";
 import type { AuditLogService } from "./audit-log.service.js";
 import { IdempotencyConflictError } from "./marketplace-charge.service.js";
 import { InsufficientFundsError, WalletNotFoundError } from "./wallet.service.js";
@@ -402,10 +403,10 @@ export class RefundService {
               return;
             }
             try {
-              await tx.wallet.update({
-                where: { id: walletId },
-                data: { balance: { decrement: amount } },
-              });
+              const debited = await debitWalletByIdIfFunded(tx, walletId, amount);
+              if (!debited) {
+                throw new InsufficientFundsError();
+              }
             } catch (err) {
               if (isInsufficientFundsDbError(err)) {
                 throw new InsufficientFundsError();
