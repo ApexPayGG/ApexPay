@@ -1,13 +1,20 @@
 import type { Request, Response } from "express";
-import type { PrismaClient } from "@prisma/client";
+import {
+  ConnectedAccountStatus,
+  SafeTaxiRideStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
   RideFinalizeConfigError,
+  RideFinalizeInvalidStateError,
   RideFinalizeNotFoundError,
+  RideFinalizeUnauthorizedError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -98,6 +105,7 @@ export class PaymentsController {
       return;
     }
 
+    let reservedIdempotencyKey: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -112,12 +120,41 @@ export class PaymentsController {
       const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
+        const [ride, connectedAccount, debitTransaction] = await Promise.all([
+          this.prisma.safeTaxiRide.findUnique({
+            where: { id: body.ride_id },
+            select: { status: true, driverId: true },
+          }),
+          this.prisma.connectedAccount.findUnique({
+            where: { id: body.driver_connected_account_id },
+            select: { userId: true, integratorUserId: true, status: true },
+          }),
+          this.prisma.transaction.findUnique({
+            where: { referenceId: `ride:${body.ride_id}:debit` },
+            select: { id: true },
+          }),
+        ]);
+        if (
+          ride?.status !== SafeTaxiRideStatus.SETTLED ||
+          debitTransaction === null ||
+          connectedAccount === null ||
+          connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+          connectedAccount.integratorUserId !== userId ||
+          connectedAccount.userId !== ride.driverId
+        ) {
+          res.status(409).json({
+            error: "Finalizacja przejazdu jest w toku albo nie została utrwalona.",
+            code: "IN_PROGRESS",
+          });
+          return;
+        }
         res.status(200).json({
           rideId: body.ride_id,
           duplicate: true,
         });
         return;
       }
+      reservedIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -126,6 +163,7 @@ export class PaymentsController {
         driverBasePayoutGrosze: body.driver_base_payout_grosze,
         tipAmountGrosze: body.tip_amount_grosze,
         tipSettlement: body.tip_settlement,
+        integratorUserId: userId,
         driverConnectedAccountId: body.driver_connected_account_id,
         ...(body.passenger_rating_stars !== undefined
           ? { passengerRatingStars: body.passenger_rating_stars }
@@ -141,8 +179,27 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (reservedIdempotencyKey !== undefined) {
+        try {
+          await this.redis.del(reservedIdempotencyKey);
+        } catch (redisErr) {
+          console.error("[payments/ride-finalize] failed to release idempotency key", redisErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
+        return;
+      }
+      if (err instanceof InsufficientFundsError) {
+        res.status(402).json({ error: "Niewystarczające środki.", code: "INSUFFICIENT_FUNDS" });
+        return;
+      }
+      if (err instanceof RideFinalizeUnauthorizedError) {
+        res.status(403).json({ error: err.message, code: "FORBIDDEN" });
+        return;
+      }
+      if (err instanceof RideFinalizeInvalidStateError) {
+        res.status(409).json({ error: err.message, code: "INVALID_STATE" });
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {

@@ -44,12 +44,16 @@ function buildItnBase64(params: {
 }
 
 describe("POST /internal/webhooks/autopay-itn", () => {
-  it("SUCCESS księguje środki i działa idempotentnie po OrderID+RemoteID", async () => {
+  function stubAutopayEnv(): void {
     process.env.AUTOPAY_SHARED_KEY = "testkey123";
     process.env.AUTOPAY_SERVICE_ID = "123456";
     process.env.AUTOPAY_GATEWAY_URL = "https://pay-accept.bm.pl";
     process.env.AUTOPAY_RETURN_URL = "https://app.example.com/payments/return";
     process.env.AUTOPAY_ITN_URL = "https://api.example.com/internal/webhooks/autopay-itn";
+  }
+
+  it("SUCCESS księguje środki i działa idempotentnie po OrderID+RemoteID", async () => {
+    stubAutopayEnv();
 
     let idempTaken = false;
     const redis = {
@@ -131,5 +135,132 @@ describe("POST /internal/webhooks/autopay-itn", () => {
     expect(res2.status).toBe(200);
     expect(res2.text).toContain("<confirmation>CONFIRMED</confirmation>");
     expect(tx.transaction.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("usuwa rezerwację idempotencji gdy księgowanie portfela nie powiedzie się", async () => {
+    stubAutopayEnv();
+
+    const redis = {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockResolvedValue("OK"),
+      del: vi.fn().mockResolvedValue(1),
+    } as unknown as Redis;
+
+    const tx = {
+      transaction: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+    };
+
+    const prisma = {
+      $transaction: vi.fn(async (fn: (trx: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+
+    const wsService = { notifyWallet: vi.fn() } as unknown as WebSocketService;
+    const { app } = createApp({ prisma, redis, wsService });
+
+    const orderId = "dep:user_1:1710000000000";
+    const payload = buildItnBase64({
+      serviceId: "123456",
+      orderId,
+      remoteId: "REMOTE-FAIL",
+      amount: "35.50",
+      currency: "PLN",
+      status: "SUCCESS",
+    });
+
+    const res = await request(app)
+      .post("/internal/webhooks/autopay-itn")
+      .type("form")
+      .send({ transactions: payload });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("BAD_REQUEST");
+    expect(redis.del).toHaveBeenCalledWith(
+      "idemp:autopay-itn:dep:user_1:1710000000000:REMOTE-FAIL",
+    );
+  });
+
+  it("nie rezerwuje idempotencji dla PENDING, aby późniejszy SUCCESS zaksięgował środki", async () => {
+    stubAutopayEnv();
+
+    let idempTaken = false;
+    const redis = {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockImplementation(async () => {
+        if (idempTaken) {
+          return null;
+        }
+        idempTaken = true;
+        return "OK";
+      }),
+      del: vi.fn().mockResolvedValue(1),
+    } as unknown as Redis;
+
+    const tx = {
+      transaction: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "txn_1",
+          walletId: "w1",
+          amount: 3550n,
+          referenceId: "dep:REMOTE-PENDING",
+          type: "DEPOSIT",
+          createdAt: new Date(),
+        }),
+      },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue({ id: "w1" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      paymentMethod: {
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockResolvedValue({ id: "pm1" }),
+      },
+    };
+
+    const prisma = {
+      $transaction: vi.fn(async (fn: (trx: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+
+    const wsService = { notifyWallet: vi.fn() } as unknown as WebSocketService;
+    const { app } = createApp({ prisma, redis, wsService });
+
+    const orderId = "dep:user_1:1710000000000";
+    const pendingPayload = buildItnBase64({
+      serviceId: "123456",
+      orderId,
+      remoteId: "REMOTE-PENDING",
+      amount: "35.50",
+      currency: "PLN",
+      status: "PENDING",
+    });
+    const successPayload = buildItnBase64({
+      serviceId: "123456",
+      orderId,
+      remoteId: "REMOTE-PENDING",
+      amount: "35.50",
+      currency: "PLN",
+      status: "SUCCESS",
+    });
+
+    const pending = await request(app)
+      .post("/internal/webhooks/autopay-itn")
+      .type("form")
+      .send({ transactions: pendingPayload });
+    expect(pending.status).toBe(200);
+    expect(tx.transaction.create).not.toHaveBeenCalled();
+
+    const success = await request(app)
+      .post("/internal/webhooks/autopay-itn")
+      .type("form")
+      .send({ transactions: successPayload });
+    expect(success.status).toBe(200);
+    expect(success.text).toContain("<confirmation>CONFIRMED</confirmation>");
+    expect(tx.transaction.create).toHaveBeenCalledTimes(1);
+    expect(redis.set).toHaveBeenCalledTimes(1);
   });
 });
