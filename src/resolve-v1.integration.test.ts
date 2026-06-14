@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import { UserRole } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
 import { MatchSettlementError } from "./services/match-settlement.service.js";
 import { createApp } from "./create-app.js";
@@ -108,9 +109,59 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
     });
   });
 
-  function token(): string {
-    return jwt.sign({ userId: "arbiter-1" }, JWT_SECRET);
+  function token(role: UserRole = UserRole.ADMIN): string {
+    return jwt.sign({ userId: "arbiter-1", role }, JWT_SECRET);
   }
+
+  it("rejects player JWTs before v1 settlement work starts", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/v1/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${token(UserRole.PLAYER)}`)
+      .set("Idempotency-Key", "player-denied")
+      .send({ finalWinnerId: "winner-1" });
+
+    expect(res.status).toBe(403);
+    expect(settleDisputedMatch).not.toHaveBeenCalled();
+    expect(wsService.notifyWallet).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when settlement rejects a winner outside the match", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+    settleDisputedMatch.mockRejectedValueOnce(
+      new MatchSettlementError("WINNER_NOT_IN_MATCH"),
+    );
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/v1/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${token()}`)
+      .set("Idempotency-Key", "outsider-winner")
+      .send({ finalWinnerId: "outsider" });
+
+    expect(res.status).toBe(400);
+    expect(wsService.notifyWallet).not.toHaveBeenCalled();
+  });
 
   it("50 concurrent same matchId with distinct Idempotency-Key: one 200 and one settlement", async () => {
     const redis = new FakeRedis() as unknown as import("ioredis").default;
