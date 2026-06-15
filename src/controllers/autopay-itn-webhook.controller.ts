@@ -58,13 +58,6 @@ export class AutopayItnWebhookController {
         return;
       }
 
-      const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-      const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
-      if (setOk !== "OK") {
-        res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
-        return;
-      }
-
       if (itn.PaymentStatus === "SUCCESS") {
         const userId = userIdFromOrderId(itn.OrderID);
         const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
@@ -72,20 +65,31 @@ export class AutopayItnWebhookController {
           throw new RangeError("Invalid Amount");
         }
 
-        await this.walletService.depositFundsPspWebhook(userId, BigInt(amountMinor), itn.RemoteID);
+        const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
+        const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
+        const ownsIdempotencyKey = setOk === "OK";
 
-        if (itn.CustomerHash !== undefined && itn.CustomerHash.length > 0) {
-          try {
-            await this.paymentMethodService.createForUser(userId, {
-              provider: PaymentMethodProvider.AUTOPAY,
-              token: itn.CustomerHash,
-              type: "AUTOPAY_RECURRING",
-            });
-          } catch (err) {
-            if (!(err instanceof PaymentMethodDuplicateError)) {
-              throw err;
+        try {
+          await this.walletService.depositFundsPspWebhook(userId, BigInt(amountMinor), itn.RemoteID);
+
+          if (itn.CustomerHash !== undefined && itn.CustomerHash.length > 0) {
+            try {
+              await this.paymentMethodService.createForUser(userId, {
+                provider: PaymentMethodProvider.AUTOPAY,
+                token: itn.CustomerHash,
+                type: "AUTOPAY_RECURRING",
+              });
+            } catch (err) {
+              if (!(err instanceof PaymentMethodDuplicateError)) {
+                throw err;
+              }
             }
           }
+        } catch (err) {
+          if (ownsIdempotencyKey) {
+            await this.redis.del(idempKey);
+          }
+          throw err;
         }
       } else if (itn.PaymentStatus === "PENDING") {
         contextLogger().info({ orderId: itn.OrderID, remoteId: itn.RemoteID }, "Autopay ITN pending");
