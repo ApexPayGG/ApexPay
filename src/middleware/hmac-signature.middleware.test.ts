@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { NextFunction, Request, Response } from "express";
 import { createHmacSignatureMiddleware } from "./hmac-signature.middleware.js";
 
@@ -8,7 +8,12 @@ function sign(secret: string, raw: Buffer): string {
 }
 
 describe("createHmacSignatureMiddleware", () => {
-  it("calls next when secret is missing", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("calls next when secret is missing outside production", () => {
+    vi.stubEnv("NODE_ENV", "test");
     const mw = createHmacSignatureMiddleware({ secretKeys: [] });
     const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
     const res = { status: vi.fn(), json: vi.fn() } as unknown as Response;
@@ -18,6 +23,22 @@ describe("createHmacSignatureMiddleware", () => {
 
     expect(next).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("fails closed in production when no HMAC secret is configured", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const mw = createHmacSignatureMiddleware({ secretKeys: [] });
+    const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn(),
+    } as unknown as Response;
+    const next = vi.fn() as NextFunction;
+
+    mw(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("returns 401 when header is missing", () => {

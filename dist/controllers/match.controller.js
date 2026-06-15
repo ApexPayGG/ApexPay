@@ -202,6 +202,9 @@ export class MatchController {
                 if (match.status === "RESOLVED") {
                     throw new Error("ALREADY_RESOLVED");
                 }
+                if (match.status !== "DISPUTED") {
+                    throw new Error("MATCH_NOT_DISPUTED");
+                }
                 assertResolveWinnerInMatch(match, winnerId);
                 const tournamentId = match.tournamentId;
                 await tx.match.update({
@@ -242,6 +245,10 @@ export class MatchController {
             }
             if (msg === "ALREADY_RESOLVED") {
                 res.status(409).json({ error: "Mecz jest już rozstrzygnięty." });
+                return;
+            }
+            if (msg === "MATCH_NOT_DISPUTED") {
+                res.status(409).json({ error: "Mecz nie jest w sporze." });
                 return;
             }
             if (msg === "WINNER_NOT_IN_MATCH") {

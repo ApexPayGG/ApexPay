@@ -10,6 +10,7 @@ import { AdminController } from "./controllers/admin.controller.js";
 import { DisputeAdminController } from "./controllers/dispute-admin.controller.js";
 import { FraudAdminController } from "./controllers/fraud-admin.controller.js";
 import { WebhookDeadLetterAdminController } from "./controllers/webhook-dead-letter-admin.controller.js";
+import { AdminAnalyticsController } from "./controllers/admin-analytics.controller.js";
 import { PspDisputeWebhookController } from "./controllers/psp-dispute-webhook.controller.js";
 import { AutopayItnWebhookController } from "./controllers/autopay-itn-webhook.controller.js";
 import { AuthController } from "./controllers/auth.controller.js";
@@ -28,6 +29,7 @@ import { SafeTaxiController } from "./controllers/safe-taxi.controller.js";
 import { TournamentController } from "./controllers/tournament.controller.js";
 import { PspDepositWebhookController } from "./controllers/psp-deposit-webhook.controller.js";
 import { createPspDepositWebhookHmacMiddleware } from "./middleware/psp-deposit-hmac.middleware.js";
+import { TradeController } from "./controllers/trade.controller.js";
 import { WalletController } from "./controllers/wallet.controller.js";
 import { createAdminRouter } from "./routes/admin.routes.js";
 import { createAuthRouter } from "./routes/auth.routes.js";
@@ -46,6 +48,7 @@ import { MatchSettlementService } from "./services/match-settlement.service.js";
 import { TournamentBracketService } from "./services/tournament-bracket.service.js";
 import { PspDepositWebhookService } from "./services/psp-deposit-webhook.service.js";
 import { AutopayService } from "./services/autopay.service.js";
+import { RideFinalizeService } from "./services/ride-finalize.service.js";
 import { createApiKeyAuthMiddleware } from "./middleware/apiKeyAuthMiddleware.js";
 import { createIntegratorHybridAuthMiddleware } from "./middleware/integrator-hybrid-auth.middleware.js";
 import { PaymentMethodService } from "./services/payment-method.service.js";
@@ -60,6 +63,7 @@ import { RefundService } from "./services/refund.service.js";
 import { DisputeService } from "./services/dispute.service.js";
 import { FraudDetectionService } from "./services/fraud-detection.service.js";
 import { SafeTaxiService } from "./services/safe-taxi.service.js";
+import { TradeService } from "./services/trade.service.js";
 import { WalletService } from "./services/wallet.service.js";
 import { WebSocketService } from "./services/websocket.service.js";
 export function createApp(options) {
@@ -114,9 +118,12 @@ export function createApp(options) {
     const pspDisputeWebhookController = new PspDisputeWebhookController(disputeService);
     const payoutService = new PayoutService(options.prisma, options.webhookPublish, auditLogService, fraudDetectionService);
     const walletController = new WalletController(walletService);
-    const adminController = new AdminController(walletService, payoutService, auditLogService);
+    const tradeService = new TradeService(options.prisma);
+    const tradeController = new TradeController(tradeService);
+    const adminController = new AdminController(walletService, payoutService, auditLogService, options.prisma);
     const webhookDeadLetterService = new WebhookDeadLetterService(options.prisma, auditLogService, options.webhookPublish);
     const webhookDeadLetterAdminController = new WebhookDeadLetterAdminController(webhookDeadLetterService);
+    const adminAnalyticsController = new AdminAnalyticsController(options.prisma);
     const pspDepositWebhookService = new PspDepositWebhookService(walletService, options.redis);
     const pspDepositWebhookController = new PspDepositWebhookController(pspDepositWebhookService);
     const pspDepositWebhookHmac = createPspDepositWebhookHmacMiddleware(() => process.env.PSP_DEPOSIT_WEBHOOK_SECRET?.trim() || undefined);
@@ -128,7 +135,8 @@ export function createApp(options) {
     const paymentMethodService = new PaymentMethodService(options.prisma);
     const paymentMethodController = new PaymentMethodController(paymentMethodService);
     const autopayService = new AutopayService();
-    const paymentsController = new PaymentsController(autopayService, options.prisma);
+    const rideFinalizeService = new RideFinalizeService(options.prisma, auditLogService);
+    const paymentsController = new PaymentsController(autopayService, options.prisma, rideFinalizeService, options.redis);
     const autopayItnWebhookController = new AutopayItnWebhookController(autopayService, walletService, paymentMethodService, options.redis);
     const apiKeyService = new ApiKeyService(options.prisma, auditLogService);
     const apiKeyAuthMiddleware = createApiKeyAuthMiddleware(apiKeyService);
@@ -227,7 +235,7 @@ export function createApp(options) {
     });
     app.use("/api/v1/auth", authRouter);
     app.use("/api/auth", authRouter);
-    const adminRouter = createAdminRouter(adminController, disputeAdminController, fraudAdminController, webhookDeadLetterAdminController);
+    const adminRouter = createAdminRouter(adminController, disputeAdminController, fraudAdminController, webhookDeadLetterAdminController, adminAnalyticsController);
     app.use("/api/v1/admin", (req, res, next) => {
         if (req.method === "GET" || req.method === "POST") {
             adminApiRateLimit(req, res, next);
@@ -260,6 +268,24 @@ export function createApp(options) {
     app.post("/api/wallet/transfer", authMiddleware, (req, res) => {
         void walletController.transfer(req, res);
     });
+    app.post("/api/v1/trades", authMiddleware, (req, res) => {
+        void tradeController.create(req, res);
+    });
+    app.get("/api/v1/trades", authMiddleware, (req, res) => {
+        void tradeController.listMine(req, res);
+    });
+    app.get("/api/v1/trades/:tradeId", (req, res) => {
+        void tradeController.getById(req, res);
+    });
+    app.post("/api/v1/trades/:tradeId/pay", authMiddleware, (req, res) => {
+        void tradeController.pay(req, res);
+    });
+    app.post("/api/v1/trades/:tradeId/confirm", authMiddleware, (req, res) => {
+        void tradeController.confirm(req, res);
+    });
+    app.post("/api/v1/trades/:tradeId/cancel", authMiddleware, (req, res) => {
+        void tradeController.cancel(req, res);
+    });
     app.post("/api/v1/safe-taxi/rides", authMiddleware, (req, res) => {
         void safeTaxiController.createRide(req, res);
     });
@@ -284,6 +310,9 @@ export function createApp(options) {
     app.post("/api/v1/payments/initiate", paymentsInitiateRateLimit, authMiddleware, (req, res) => {
         void paymentsController.initiate(req, res);
     });
+    app.post("/api/v1/payments/ride-finalize", apiKeyAuthMiddleware, (req, res) => {
+        void paymentsController.rideFinalize(req, res);
+    });
     app.get("/api/v1/api-keys", authMiddleware, (req, res) => {
         void apiKeyController.list(req, res);
     });
@@ -299,6 +328,9 @@ export function createApp(options) {
     app.get("/api/v1/integrations/charges", integratorHybridAuthMiddleware, (req, res) => {
         void integrationsChargeController.listCharges(req, res);
     });
+    app.get("/api/v1/integrations/charges/export", integratorHybridAuthMiddleware, (req, res) => {
+        void integrationsChargeController.exportCharges(req, res);
+    });
     app.post("/api/v1/integrations/charges", apiKeyAuthMiddleware, (req, res) => {
         void integrationsChargeController.createCharge(req, res);
     });
@@ -310,6 +342,9 @@ export function createApp(options) {
     });
     app.get("/api/v1/integrations/payouts", integratorHybridAuthMiddleware, (req, res) => {
         void integrationsPayoutController.listPayouts(req, res);
+    });
+    app.get("/api/v1/integrations/payouts/export", integratorHybridAuthMiddleware, (req, res) => {
+        void integrationsPayoutController.exportPayouts(req, res);
     });
     app.post("/api/v1/integrations/payouts", apiKeyAuthMiddleware, (req, res) => {
         void integrationsPayoutController.create(req, res);
@@ -347,10 +382,10 @@ export function createApp(options) {
     app.post("/api/matches/:id/report", authMiddleware, (req, res) => {
         void matchController.reportResult(req, res);
     });
-    app.post("/api/matches/:id/resolve", authMiddleware, (req, res) => {
+    app.post("/api/matches/:id/resolve", authMiddleware, requireRole([UserRole.ADMIN]), (req, res) => {
         void matchController.resolveDispute(req, res);
     });
-    app.post("/api/v1/matches/:id/resolve", hmacSignature, authMiddleware, resolveRateLimit, idempotencyResolve, (req, res) => {
+    app.post("/api/v1/matches/:id/resolve", hmacSignature, authMiddleware, requireRole([UserRole.ADMIN]), resolveRateLimit, idempotencyResolve, (req, res) => {
         void matchResolveV1.resolve(req, res);
     });
     /** Zbudowany React (Vite): jeden port z API — `APEXPAY_WEB_UI_DIR=./frontend/dist npm start` */

@@ -1,7 +1,15 @@
-import { Prisma, TransactionType as TxType, type PrismaClient } from "@prisma/client";
+import {
+  AuditActorType,
+  ConnectedAccountStatus,
+  Prisma,
+  RidePaymentMethod,
+  SafeTaxiRideStatus,
+  TransactionType as TxType,
+  type PrismaClient,
+} from "@prisma/client";
 import type { Request } from "express";
-import { AuditActorType } from "@prisma/client";
 import type { AuditLogService } from "./audit-log.service.js";
+import { InsufficientFundsError } from "./wallet.service.js";
 
 export type RideFinalizeInput = {
   rideId: string;
@@ -12,6 +20,7 @@ export type RideFinalizeInput = {
   tipSettlement: string;
   passengerRatingStars?: number;
   driverConnectedAccountId: string;
+  integratorUserId: string;
 };
 
 export type RideFinalizeResult = {
@@ -22,17 +31,19 @@ export type RideFinalizeResult = {
 };
 
 export class RideFinalizeConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RideFinalizeConfigError";
-  }
+  constructor(message: string) { super(message); this.name = "RideFinalizeConfigError"; }
 }
 
 export class RideFinalizeNotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RideFinalizeNotFoundError";
-  }
+  constructor(message: string) { super(message); this.name = "RideFinalizeNotFoundError"; }
+}
+
+export class RideFinalizeForbiddenError extends Error {
+  constructor(message: string) { super(message); this.name = "RideFinalizeForbiddenError"; }
+}
+
+export class RideFinalizeInvalidStateError extends Error {
+  constructor(message: string) { super(message); this.name = "RideFinalizeInvalidStateError"; }
 }
 
 function platformUserIdFromEnv(): string {
@@ -49,6 +60,50 @@ export class RideFinalizeService {
     private readonly auditLogService?: AuditLogService,
   ) {}
 
+  async findCompletedRide(input: RideFinalizeInput): Promise<RideFinalizeResult | null> {
+    const rideId = input.rideId.trim();
+    const ride = await this.prisma.safeTaxiRide.findUnique({
+      where: { id: rideId },
+      select: {
+        driverId: true,
+        status: true,
+        platformCommissionCents: true,
+        driverPayoutCents: true,
+      },
+    });
+    if (ride === null || ride.status !== SafeTaxiRideStatus.SETTLED) {
+      return null;
+    }
+
+    const [connectedAccount, driverTxn, tipTxn] = await Promise.all([
+      this.prisma.connectedAccount.findUnique({
+        where: { id: input.driverConnectedAccountId },
+        select: { userId: true, integratorUserId: true, status: true },
+      }),
+      this.prisma.transaction.findUnique({
+        where: { referenceId: `ride:${rideId}:driver` },
+        select: { id: true },
+      }),
+      this.prisma.transaction.findUnique({ where: { referenceId: `ride:${rideId}:tip` }, select: { amount: true } }),
+    ]);
+    if (
+      driverTxn === null ||
+      connectedAccount === null ||
+      connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+      connectedAccount.userId !== ride.driverId ||
+      connectedAccount.integratorUserId !== input.integratorUserId
+    ) {
+      return null;
+    }
+
+    return {
+      rideId,
+      driverPayout: Number(ride.driverPayoutCents ?? 0n),
+      platformCommission: Number(ride.platformCommissionCents ?? 0n),
+      tip: Number(tipTxn?.amount ?? 0n),
+    };
+  }
+
   async finalizeRide(input: RideFinalizeInput, req?: Request): Promise<RideFinalizeResult> {
     const platformUserId = platformUserIdFromEnv();
     const rideId = input.rideId.trim();
@@ -57,24 +112,51 @@ export class RideFinalizeService {
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: {
+            id: true,
+            passengerId: true,
+            driverId: true,
+            paymentMethod: true,
+            status: true,
+          },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
         }
+        if (ride.status !== SafeTaxiRideStatus.CREATED || ride.paymentMethod !== RidePaymentMethod.CARD) {
+          throw new RideFinalizeInvalidStateError("Przejazd nie oczekuje na rozliczenie kartą.");
+        }
 
         const connectedAccount = await tx.connectedAccount.findUnique({
           where: { id: input.driverConnectedAccountId },
-          select: { id: true, userId: true, integratorUserId: true },
+          select: { id: true, userId: true, integratorUserId: true, status: true },
         });
-        if (connectedAccount === null || connectedAccount.userId === null) {
+        if (
+          connectedAccount === null ||
+          connectedAccount.userId === null ||
+          connectedAccount.status !== ConnectedAccountStatus.ACTIVE
+        ) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (connectedAccount.integratorUserId !== input.integratorUserId) {
+          throw new RideFinalizeForbiddenError("Subkonto kierowcy nie należy do integratora.");
+        }
+        if (connectedAccount.userId !== ride.driverId) {
+          throw new RideFinalizeForbiddenError("Subkonto nie jest przypisane do kierowcy tego przejazdu.");
+        }
+
+        const existingDriverTxn = await tx.transaction.findUnique({
+          where: { referenceId: `ride:${rideId}:driver` },
+          select: { id: true },
+        });
+        if (existingDriverTxn !== null) {
+          throw new RideFinalizeInvalidStateError("Przejazd został już rozliczony.");
         }
 
         const [passengerWallet, driverWallet, platformWallet] = await Promise.all([
           tx.wallet.findUnique({
             where: { userId: ride.passengerId },
-            select: { id: true, balance: true },
+            select: { id: true },
           }),
           tx.wallet.findUnique({
             where: { userId: connectedAccount.userId },
@@ -94,22 +176,23 @@ export class RideFinalizeService {
         const driverAmount = BigInt(input.driverBasePayoutGrosze);
         const platformAmount = BigInt(input.platformCommissionGrosze);
         const tipAmount = BigInt(input.tipAmountGrosze);
+        const passengerDebitAmount = baseAmount + tipAmount;
 
-        // Jeśli saldo pasażera nie pokrywa kwoty, zakładamy że pay-in był już zaksięgowany poza tym krokiem.
-        if (passengerWallet.balance >= baseAmount) {
-          await tx.wallet.update({
-            where: { id: passengerWallet.id },
-            data: { balance: { decrement: baseAmount } },
-          });
-          await tx.transaction.create({
-            data: {
-              walletId: passengerWallet.id,
-              amount: -baseAmount,
-              referenceId: `ride:${rideId}:debit`,
-              type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
-            },
-          });
+        const passengerDebit = await tx.wallet.updateMany({
+          where: { id: passengerWallet.id, balance: { gte: passengerDebitAmount } },
+          data: { balance: { decrement: passengerDebitAmount } },
+        });
+        if (passengerDebit.count !== 1) {
+          throw new InsufficientFundsError();
         }
+        await tx.transaction.create({
+          data: {
+            walletId: passengerWallet.id,
+            amount: -passengerDebitAmount,
+            referenceId: `ride:${rideId}:debit`,
+            type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
+          },
+        });
 
         await tx.wallet.update({
           where: { id: driverWallet.id },
@@ -184,6 +267,17 @@ export class RideFinalizeService {
               platformCommission: input.platformCommissionGrosze,
               tip: input.tipAmountGrosze,
             },
+          },
+        });
+
+        await tx.safeTaxiRide.update({
+          where: { id: rideId },
+          data: {
+            status: SafeTaxiRideStatus.SETTLED,
+            fareCents: baseAmount,
+            platformCommissionCents: platformAmount,
+            driverPayoutCents: driverAmount + tipAmount,
+            settledAt: new Date(),
           },
         });
 
