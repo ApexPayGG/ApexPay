@@ -59,6 +59,13 @@ export function createHmacSignatureMiddleware(options: HmacSignatureOptions) {
 
   return (req: Request, res: Response, next: NextFunction): void => {
     if (keys.length === 0) {
+      if (process.env.NODE_ENV === "production") {
+        res.status(503).json({
+          error: "HMAC nie jest skonfigurowany.",
+          code: "HMAC_NOT_CONFIGURED",
+        });
+        return;
+      }
       next();
       return;
     }

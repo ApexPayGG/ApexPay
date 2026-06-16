@@ -122,10 +122,14 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      API_SECRET_KEYS: ${API_SECRET_KEYS:?set API_SECRET_KEYS}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL}
       RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-apexpay.events}
       PSP_DEPOSIT_WEBHOOK_SECRET: ${PSP_DEPOSIT_WEBHOOK_SECRET:-}
+      SAFE_TAXI_PLATFORM_USER_ID: ${SAFE_TAXI_PLATFORM_USER_ID:-}
+      SAFE_TAXI_PLATFORM_COMMISSION_BPS: ${SAFE_TAXI_PLATFORM_COMMISSION_BPS:-1500}
+      MAX_DRIVER_DEBT: ${MAX_DRIVER_DEBT:-}
       TRUST_PROXY: ${TRUST_PROXY:-1}
       AUTH_RATE_WINDOW_MS: ${AUTH_RATE_WINDOW_MS:-60000}
       AUTH_RATE_MAX_REQUESTS: ${AUTH_RATE_MAX_REQUESTS:-25}
@@ -151,6 +155,13 @@ services:
       - traefik.http.routers.api-inapp.tls.certresolver=letsencrypt
       - traefik.http.routers.api-inapp.middlewares=api-ratelimit
       - traefik.http.routers.api-inapp.priority=100
+      # Front SkillGaming używa relatywnych /api/*, więc subdomena aplikacji też musi mieć router API.
+      - "traefik.http.routers.api-skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`) && PathPrefix(`/api`)"
+      - traefik.http.routers.api-skillgaming.service=api
+      - traefik.http.routers.api-skillgaming.entrypoints=websecure
+      - traefik.http.routers.api-skillgaming.tls.certresolver=letsencrypt
+      - traefik.http.routers.api-skillgaming.middlewares=api-ratelimit
+      - traefik.http.routers.api-skillgaming.priority=100
     depends_on:
       api-migrator:
         condition: service_completed_successfully
@@ -204,9 +215,10 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=apexpay_prod_network
-      - "traefik.http.routers.skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`)"
+      - "traefik.http.routers.skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`) && !PathPrefix(`/api`)"
       - traefik.http.routers.skillgaming.entrypoints=websecure
       - traefik.http.routers.skillgaming.tls.certresolver=letsencrypt
+      - traefik.http.routers.skillgaming.priority=1
       - traefik.http.services.skillgaming.loadbalancer.server.port=80
       - traefik.http.middlewares.skillgaming-security.headers.contentTypeNosniff=true
       - traefik.http.middlewares.skillgaming-security.headers.browserXssFilter=true

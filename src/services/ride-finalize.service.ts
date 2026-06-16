@@ -1,7 +1,15 @@
-import { Prisma, TransactionType as TxType, type PrismaClient } from "@prisma/client";
+import {
+  ConnectedAccountStatus,
+  Prisma,
+  RidePaymentMethod,
+  SafeTaxiRideStatus,
+  TransactionType as TxType,
+  type PrismaClient,
+} from "@prisma/client";
 import type { Request } from "express";
 import { AuditActorType } from "@prisma/client";
 import type { AuditLogService } from "./audit-log.service.js";
+import { InsufficientFundsError } from "./wallet.service.js";
 
 export type RideFinalizeInput = {
   rideId: string;
@@ -35,6 +43,20 @@ export class RideFinalizeNotFoundError extends Error {
   }
 }
 
+export class RideFinalizeAuthorizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RideFinalizeAuthorizationError";
+  }
+}
+
+export class RideFinalizeInvalidStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RideFinalizeInvalidStateError";
+  }
+}
+
 function platformUserIdFromEnv(): string {
   const value = process.env.SAFE_TAXI_PLATFORM_USER_ID?.trim();
   if (value === undefined || value.length === 0) {
@@ -52,29 +74,51 @@ export class RideFinalizeService {
   async finalizeRide(input: RideFinalizeInput, req?: Request): Promise<RideFinalizeResult> {
     const platformUserId = platformUserIdFromEnv();
     const rideId = input.rideId.trim();
+    const integratorUserId = req?.user?.id?.trim();
+    if (integratorUserId === undefined || integratorUserId.length === 0) {
+      throw new RideFinalizeAuthorizationError("Brak kontekstu integratora API.");
+    }
 
     return this.prisma.$transaction(
       async (tx) => {
         const ride = await tx.safeTaxiRide.findUnique({
           where: { id: rideId },
-          select: { id: true, passengerId: true },
+          select: {
+            id: true,
+            passengerId: true,
+            driverId: true,
+            paymentMethod: true,
+            status: true,
+          },
         });
         if (ride === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
         }
+        if (ride.paymentMethod !== RidePaymentMethod.CARD || ride.status !== SafeTaxiRideStatus.CREATED) {
+          throw new RideFinalizeInvalidStateError("Przejazd nie jest gotowy do finalizacji CARD.");
+        }
 
         const connectedAccount = await tx.connectedAccount.findUnique({
           where: { id: input.driverConnectedAccountId },
-          select: { id: true, userId: true, integratorUserId: true },
+          select: { id: true, userId: true, integratorUserId: true, status: true },
         });
         if (connectedAccount === null || connectedAccount.userId === null) {
           throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+        }
+        if (
+          connectedAccount.userId !== ride.driverId ||
+          connectedAccount.integratorUserId !== integratorUserId ||
+          connectedAccount.status !== ConnectedAccountStatus.ACTIVE
+        ) {
+          throw new RideFinalizeAuthorizationError(
+            "Subkonto kierowcy nie jest powiązane z tym integratorem i przejazdem.",
+          );
         }
 
         const [passengerWallet, driverWallet, platformWallet] = await Promise.all([
           tx.wallet.findUnique({
             where: { userId: ride.passengerId },
-            select: { id: true, balance: true },
+            select: { id: true },
           }),
           tx.wallet.findUnique({
             where: { userId: connectedAccount.userId },
@@ -95,21 +139,21 @@ export class RideFinalizeService {
         const platformAmount = BigInt(input.platformCommissionGrosze);
         const tipAmount = BigInt(input.tipAmountGrosze);
 
-        // Jeśli saldo pasażera nie pokrywa kwoty, zakładamy że pay-in był już zaksięgowany poza tym krokiem.
-        if (passengerWallet.balance >= baseAmount) {
-          await tx.wallet.update({
-            where: { id: passengerWallet.id },
-            data: { balance: { decrement: baseAmount } },
-          });
-          await tx.transaction.create({
-            data: {
-              walletId: passengerWallet.id,
-              amount: -baseAmount,
-              referenceId: `ride:${rideId}:debit`,
-              type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
-            },
-          });
+        const debit = await tx.wallet.updateMany({
+          where: { id: passengerWallet.id, balance: { gte: baseAmount } },
+          data: { balance: { decrement: baseAmount } },
+        });
+        if (debit.count !== 1) {
+          throw new InsufficientFundsError();
         }
+        await tx.transaction.create({
+          data: {
+            walletId: passengerWallet.id,
+            amount: -baseAmount,
+            referenceId: `ride:${rideId}:debit`,
+            type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
+          },
+        });
 
         await tx.wallet.update({
           where: { id: driverWallet.id },
@@ -151,6 +195,17 @@ export class RideFinalizeService {
             },
           });
         }
+
+        await tx.safeTaxiRide.update({
+          where: { id: rideId },
+          data: {
+            status: SafeTaxiRideStatus.SETTLED,
+            fareCents: baseAmount,
+            platformCommissionCents: platformAmount,
+            driverPayoutCents: driverAmount,
+            settledAt: new Date(),
+          },
+        });
 
         if (this.auditLogService !== undefined) {
           await this.auditLogService.log(
