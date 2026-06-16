@@ -4,10 +4,13 @@ import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
+  RideFinalizeAuthorizationError,
   RideFinalizeConfigError,
+  RideFinalizeInvalidStateError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -98,6 +101,8 @@ export class PaymentsController {
       return;
     }
 
+    let idempotencyKey: string | undefined;
+    let idempotencyReserved = false;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -109,7 +114,7 @@ export class PaymentsController {
         return;
       }
 
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
         res.status(200).json({
@@ -118,6 +123,7 @@ export class PaymentsController {
         });
         return;
       }
+      idempotencyReserved = true;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -141,12 +147,31 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (idempotencyReserved && idempotencyKey !== undefined) {
+        try {
+          await this.redis.del(idempotencyKey);
+        } catch (releaseErr) {
+          console.error("[payments/ride-finalize] redis release failed", releaseErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
       }
+      if (err instanceof RideFinalizeAuthorizationError) {
+        res.status(403).json({ error: err.message, code: "FORBIDDEN" });
+        return;
+      }
       if (err instanceof RideFinalizeNotFoundError) {
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
+        return;
+      }
+      if (err instanceof RideFinalizeInvalidStateError) {
+        res.status(409).json({ error: err.message, code: "CONFLICT" });
+        return;
+      }
+      if (err instanceof InsufficientFundsError) {
+        res.status(402).json({ error: "Niewystarczające środki.", code: "PAYMENT_REQUIRED" });
         return;
       }
       if (err instanceof RideFinalizeConfigError) {
