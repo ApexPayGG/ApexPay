@@ -412,6 +412,7 @@ export class PayoutService {
             amount: r.amount,
             currency: r.currency,
             status: r.status,
+            pspReferenceId: r.pspReferenceId,
             createdAt: r.createdAt,
             connectedAccountId: r.connectedAccount.id,
             connectedAccountEmail: r.connectedAccount.email,
