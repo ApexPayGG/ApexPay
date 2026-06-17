@@ -27,7 +27,6 @@ type Check = { name: string; optional?: boolean; prodRecommended?: boolean };
 const checks: Check[] = [
   { name: "DATABASE_URL" },
   { name: "JWT_SECRET" },
-  { name: "API_SECRET_KEYS" },
   { name: "REDIS_URL", optional: true },
   { name: "RABBITMQ_URL", optional: true },
   { name: "PSP_DEPOSIT_WEBHOOK_SECRET", optional: true, prodRecommended: true },
@@ -134,6 +133,13 @@ for (const c of checks) {
   } else if (ok) {
     console.log(`[ops:check-env] OK: ${c.name}`);
   }
+}
+
+if (!isSet("API_SECRET_KEYS") && !isSet("API_SECRET_KEY")) {
+  console.error("[ops:check-env] BRAK (wymagane): API_SECRET_KEYS albo API_SECRET_KEY");
+  failed = true;
+} else {
+  console.log("[ops:check-env] OK: API_SECRET_KEYS/API_SECRET_KEY");
 }
 
 if (treatAsProd && !isSet("PSP_DEPOSIT_WEBHOOK_SECRET")) {

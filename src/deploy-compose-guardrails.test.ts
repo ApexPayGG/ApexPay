@@ -9,6 +9,8 @@ describe("production compose routing guardrails", () => {
       "traefik.http.routers.api-skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`) && PathPrefix(`/api`)",
     );
     expect(compose).toContain("traefik.http.routers.api-skillgaming.service=api");
+    expect(compose).toContain("API_SECRET_KEYS: ${API_SECRET_KEYS:-}");
+    expect(compose).toContain("API_SECRET_KEY: ${API_SECRET_KEY:-}");
     expect(compose).toContain(
       "traefik.http.routers.skillgaming.rule=Host(`${SKILLGAMING_APP_DOMAIN:?set SKILLGAMING_APP_DOMAIN}`) && !PathPrefix(`/api`)",
     );

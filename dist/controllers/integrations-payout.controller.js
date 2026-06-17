@@ -4,6 +4,7 @@ import { FraudBlockedError } from "../services/fraud-detection.service.js";
 import { PayoutService } from "../services/payout.service.js";
 import { InsufficientFundsError, WalletNotFoundError } from "../services/wallet.service.js";
 import { decodeCursor, parsePaginationLimit } from "../lib/pagination.js";
+import { csvResponse, toCsv } from "../lib/csv-export.js";
 const bodySchema = z
     .object({
     amount: z.number().int().positive(),
@@ -29,6 +30,7 @@ function serializePayoutListItem(row) {
         amount: row.amount.toString(),
         currency: row.currency,
         status: row.status,
+        pspReferenceId: row.pspReferenceId,
         createdAt: row.createdAt.toISOString(),
         connectedAccountId: row.connectedAccountId,
         connectedAccountEmail: row.connectedAccountEmail,
@@ -61,6 +63,78 @@ export class IntegrationsPayoutController {
         }
         catch (err) {
             console.error("[integrations/payouts GET]", err);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    }
+    async exportPayouts(req, res) {
+        const integratorUserId = req.user?.id?.trim();
+        if (integratorUserId === undefined || integratorUserId.length === 0) {
+            res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+            return;
+        }
+        const parseDateQuery = (raw) => {
+            if (typeof raw !== "string" || raw.trim().length === 0) {
+                return undefined;
+            }
+            const date = new Date(raw.trim());
+            if (Number.isNaN(date.getTime())) {
+                throw new RangeError("invalid-date");
+            }
+            return date;
+        };
+        const parseExportLimit = (raw) => {
+            if (typeof raw !== "string" || raw.trim().length === 0) {
+                return 5000;
+            }
+            const parsed = Number.parseInt(raw.trim(), 10);
+            if (!Number.isFinite(parsed) || parsed <= 0) {
+                throw new RangeError("invalid-limit");
+            }
+            return Math.min(parsed, 5000);
+        };
+        const formatPln = (amountCents) => {
+            const sign = amountCents < 0n ? "-" : "";
+            const abs = amountCents < 0n ? -amountCents : amountCents;
+            const zl = abs / 100n;
+            const gr = (abs % 100n).toString().padStart(2, "0");
+            return `${sign}${zl.toString()},${gr}`;
+        };
+        try {
+            const from = parseDateQuery(req.query["from"]);
+            const to = parseDateQuery(req.query["to"]);
+            if (from !== undefined && to !== undefined && from > to) {
+                res.status(400).json({ error: "Parametr from nie może być późniejszy niż to.", code: "BAD_REQUEST" });
+                return;
+            }
+            const limit = parseExportLimit(req.query["limit"]);
+            const { items } = await this.payoutService.listForIntegration(integratorUserId, { limit });
+            const filtered = items.filter((row) => {
+                if (from !== undefined && row.createdAt < from) {
+                    return false;
+                }
+                if (to !== undefined && row.createdAt > to) {
+                    return false;
+                }
+                return true;
+            });
+            const csv = toCsv(["ID", "Kwota (PLN)", "Waluta", "Subkonto ID", "Status", "PSP Reference ID", "Data utworzenia"], filtered.map((row) => [
+                row.id,
+                formatPln(row.amount),
+                row.currency,
+                row.connectedAccountId,
+                row.status,
+                row.pspReferenceId ?? "—",
+                row.createdAt.toISOString(),
+            ]));
+            const today = new Date().toISOString().slice(0, 10);
+            csvResponse(res, `payouts_${today}.csv`, csv);
+        }
+        catch (err) {
+            if (err instanceof RangeError) {
+                res.status(400).json({ error: "Nieprawidłowe parametry eksportu.", code: "BAD_REQUEST" });
+                return;
+            }
+            console.error("[integrations/payouts/export GET]", err);
             res.status(500).json({ error: "Internal server error" });
         }
     }

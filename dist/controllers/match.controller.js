@@ -199,7 +199,7 @@ export class MatchController {
                 if (!match) {
                     throw new Error("MATCH_NOT_FOUND");
                 }
-                if (match.status === "RESOLVED") {
+                if (match.status !== "DISPUTED") {
                     throw new Error("ALREADY_RESOLVED");
                 }
                 assertResolveWinnerInMatch(match, winnerId);
