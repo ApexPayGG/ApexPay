@@ -27,12 +27,15 @@ type Check = { name: string; optional?: boolean; prodRecommended?: boolean };
 const checks: Check[] = [
   { name: "DATABASE_URL" },
   { name: "JWT_SECRET" },
+  { name: "API_SECRET_KEYS" },
   { name: "REDIS_URL", optional: true },
   { name: "RABBITMQ_URL", optional: true },
   { name: "PSP_DEPOSIT_WEBHOOK_SECRET", optional: true, prodRecommended: true },
   { name: "API_DOMAIN", optional: true, prodRecommended: true },
   { name: "APP_DOMAIN", optional: true, prodRecommended: true },
+  { name: "SKILLGAMING_APP_DOMAIN", optional: true, prodRecommended: true },
   { name: "APEXPAY_WEB_IMAGE", optional: true, prodRecommended: true },
+  { name: "SKILLGAMING_WEB_IMAGE", optional: true, prodRecommended: true },
   { name: "CORS_ORIGIN", optional: true, prodRecommended: true },
 ];
 
