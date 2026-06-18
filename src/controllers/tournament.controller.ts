@@ -192,10 +192,16 @@ export class TournamentController {
           }
 
           try {
-            await tx.wallet.update({
-              where: { userId: trimmedUserId },
+            const debit = await tx.wallet.updateMany({
+              where: {
+                userId: trimmedUserId,
+                balance: { gte: tournament.entryFee },
+              },
               data: { balance: { decrement: tournament.entryFee } },
             });
+            if (debit.count !== 1) {
+              throw new Error("NO_FUNDS");
+            }
           } catch (err) {
             if (isInsufficientFundsDbError(err)) {
               throw new Error("NO_FUNDS");

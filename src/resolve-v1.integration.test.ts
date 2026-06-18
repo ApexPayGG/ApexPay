@@ -109,8 +109,36 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
   });
 
   function token(): string {
-    return jwt.sign({ userId: "arbiter-1" }, JWT_SECRET);
+    return jwt.sign({ userId: "arbiter-1", role: "ADMIN" }, JWT_SECRET);
   }
+
+  function playerToken(): string {
+    return jwt.sign({ userId: "player-1", role: "PLAYER" }, JWT_SECRET);
+  }
+
+  it("rejects non-admin JWT before settlement service is called", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/v1/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${playerToken()}`)
+      .set("Idempotency-Key", "player-denied")
+      .send({ finalWinnerId: "winner-1" });
+
+    expect(res.status).toBe(403);
+    expect(settleDisputedMatch).not.toHaveBeenCalled();
+    expect(wsService.notifyWallet).not.toHaveBeenCalled();
+  });
 
   it("50 concurrent same matchId with distinct Idempotency-Key: one 200 and one settlement", async () => {
     const redis = new FakeRedis() as unknown as import("ioredis").default;

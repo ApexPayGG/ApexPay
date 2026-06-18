@@ -5,6 +5,7 @@ import {
   TransactionType,
   type PrismaClient,
 } from "@prisma/client";
+import { InsufficientFundsError } from "./wallet.service.js";
 import {
   DriverDebtLimitExceededError,
   SafeTaxiConfigError,
@@ -139,6 +140,7 @@ describe("SafeTaxiService.settleRide — CASH (driver debt)", () => {
     const tx = {
       safeTaxiRide: {
         findUnique: vi.fn().mockResolvedValue(rideRow),
+        update: vi.fn().mockResolvedValue({}),
       },
       transaction: {
         findUnique: vi.fn().mockResolvedValue(null),
@@ -158,6 +160,70 @@ describe("SafeTaxiService.settleRide — CASH (driver debt)", () => {
       DriverDebtLimitExceededError,
     );
     expect(walletUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("SafeTaxiService.settleRide — CARD", () => {
+  beforeEach(() => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "user_platform");
+    vi.stubEnv("SAFE_TAXI_PLATFORM_COMMISSION_BPS", "1500");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("odrzuca rozliczenie bez wystarczających środków pasażera", async () => {
+    const rideRow = {
+      id: "ride_card_1",
+      passengerId: "user_pass",
+      driverId: "user_driver",
+      paymentMethod: RidePaymentMethod.CARD,
+      status: SafeTaxiRideStatus.CREATED,
+      fareCents: null,
+      platformCommissionCents: null,
+      driverPayoutCents: null,
+      settledAt: null,
+      createdAt: new Date(),
+    };
+    const walletUpdate = vi.fn();
+    const txCreate = vi.fn();
+    const tx = {
+      safeTaxiRide: {
+        findUnique: vi.fn().mockResolvedValue(rideRow),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      transaction: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: txCreate,
+      },
+      wallet: {
+        findUnique: vi.fn().mockImplementation((args: { where: { userId: string } }) => {
+          if (args.where.userId === "user_pass") {
+            return Promise.resolve({ id: "w_passenger", balance: 100n });
+          }
+          if (args.where.userId === "user_driver") {
+            return Promise.resolve({ id: "w_driver" });
+          }
+          if (args.where.userId === "user_platform") {
+            return Promise.resolve({ id: "w_platform" });
+          }
+          return Promise.resolve(null);
+        }),
+        update: walletUpdate,
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+
+    const service = new SafeTaxiService(prisma);
+    await expect(service.settleRide("ride_card_1", 10000n)).rejects.toBeInstanceOf(
+      InsufficientFundsError,
+    );
+    expect(walletUpdate).not.toHaveBeenCalled();
+    expect(txCreate).not.toHaveBeenCalled();
   });
 });
 
