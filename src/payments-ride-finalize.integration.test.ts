@@ -50,18 +50,6 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           status: opts?.rideStatus ?? SafeTaxiRideStatus.CREATED,
         }),
         update: vi.fn().mockResolvedValue({}),
-        updateMany: vi.fn().mockImplementation(
-          (args: { where: { id: string; balance?: { gte?: bigint } } }) => {
-            if (
-              args.where.id === "w_passenger" &&
-              args.where.balance?.gte !== undefined &&
-              passengerBalance >= args.where.balance.gte
-            ) {
-              return Promise.resolve({ count: 1 });
-            }
-            return Promise.resolve({ count: 0 });
-          },
-        ),
       },
       connectedAccount: {
         findUnique: vi.fn().mockResolvedValue({
@@ -85,6 +73,18 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           return Promise.resolve(null);
         }),
         update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockImplementation(
+          (args: { where: { id: string; balance?: { gte?: bigint } } }) => {
+            if (
+              args.where.id === "w_passenger" &&
+              args.where.balance?.gte !== undefined &&
+              passengerBalance >= args.where.balance.gte
+            ) {
+              return Promise.resolve({ count: 1 });
+            }
+            return Promise.resolve({ count: 0 });
+          },
+        ),
       },
       transaction: {
         create: vi.fn().mockImplementation((args: { data: { referenceId: string; amount: bigint; type: string } }) => {
