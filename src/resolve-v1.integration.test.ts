@@ -109,7 +109,7 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
   });
 
   function token(): string {
-    return jwt.sign({ userId: "arbiter-1" }, JWT_SECRET);
+    return jwt.sign({ userId: "arbiter-1", role: "ADMIN" }, JWT_SECRET);
   }
 
   function playerToken(): string {
