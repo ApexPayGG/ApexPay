@@ -118,9 +118,10 @@ export class PaymentsController {
       idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
-        res.status(200).json({
+        res.status(409).json({
           rideId: body.ride_id,
-          duplicate: true,
+          code: "IDEMPOTENCY_CONFLICT",
+          error: "Ride finalize is already processing or completed.",
         });
         return;
       }
