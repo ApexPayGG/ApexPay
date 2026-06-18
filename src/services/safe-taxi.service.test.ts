@@ -140,6 +140,7 @@ describe("SafeTaxiService.settleRide — CASH (driver debt)", () => {
     const tx = {
       safeTaxiRide: {
         findUnique: vi.fn().mockResolvedValue(rideRow),
+        update: vi.fn().mockResolvedValue({}),
       },
       transaction: {
         findUnique: vi.fn().mockResolvedValue(null),
