@@ -200,15 +200,18 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     );
   });
 
-  it("200 duplicate:true dla duplikatu ride_id", async () => {
+  it("409 dla duplikatu ride_id bez potwierdzonego trwałego rozliczenia", async () => {
     const { prisma } = buildContext();
     const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "IDEMPOTENCY_CONFLICT",
+      rideId: "ride_1",
+    });
   });
 
   it("402 gdy pasażer nie ma środków i nie tworzy creditów bez debetu", async () => {
