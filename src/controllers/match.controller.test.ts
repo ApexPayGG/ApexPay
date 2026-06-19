@@ -408,6 +408,56 @@ describe("MatchController.resolveDispute", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 409 when match was already settled by v1 resolver", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "SETTLED",
+      winnerId: "old",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "old" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("returns 409 and skips payout when match is not disputed", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "PENDING",
+      winnerId: null,
+      playerAId: "pa",
+      playerBId: "pb",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "pa" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   it("returns 400 when final winner is not an assigned player", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",

@@ -17,6 +17,8 @@ function createTxMock(overrides: {
     status: string;
     winnerId: string | null;
     tournamentId: string;
+    playerAId?: string | null;
+    playerBId?: string | null;
   };
 } = {}) {
   const matchRow = overrides.matchRow ?? {
@@ -24,6 +26,8 @@ function createTxMock(overrides: {
     status: "DISPUTED",
     winnerId: null,
     tournamentId: "t1",
+    playerAId: "pa",
+    playerBId: "pb",
   };
   const queryRaw = vi.fn().mockResolvedValue([matchRow]);
   const matchFindUnique = vi.fn();
@@ -83,6 +87,8 @@ describe("MatchSettlementService", () => {
         status: "SETTLED",
         winnerId: "w1",
         tournamentId: "t1",
+        playerAId: "pa",
+        playerBId: "pb",
       },
     });
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -105,6 +111,8 @@ describe("MatchSettlementService", () => {
         status: "PENDING",
         winnerId: null,
         tournamentId: "t1",
+        playerAId: "pa",
+        playerBId: "pb",
       },
     });
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -118,6 +126,33 @@ describe("MatchSettlementService", () => {
         finalWinnerId: "w1",
       }),
     ).rejects.toMatchObject({ code: "MATCH_NOT_DISPUTED" });
+  });
+
+  it("throws WINNER_NOT_IN_MATCH before paying a wallet", async () => {
+    txMocks = createTxMock({
+      matchRow: {
+        id: "m1",
+        status: "DISPUTED",
+        winnerId: null,
+        tournamentId: "t1",
+        playerAId: "pa",
+        playerBId: "pb",
+      },
+    });
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "outsider",
+      }),
+    ).rejects.toMatchObject({ code: "WINNER_NOT_IN_MATCH" });
+    expect(txMocks.matchFindUnique).not.toHaveBeenCalled();
+    expect(txMocks.walletFindUnique).not.toHaveBeenCalled();
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
   });
 
   it("locks match, updates wallets, ledger, outbox, and sets SETTLED", async () => {
