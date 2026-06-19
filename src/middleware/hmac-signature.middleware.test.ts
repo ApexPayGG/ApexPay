@@ -7,17 +7,58 @@ function sign(secret: string, raw: Buffer): string {
   return createHmac("sha256", secret).update(raw).digest("hex");
 }
 
+function withNodeEnv<T>(value: string | undefined, run: () => T): T {
+  const previous = process.env.NODE_ENV;
+  if (value === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = value;
+  }
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previous;
+    }
+  }
+}
+
 describe("createHmacSignatureMiddleware", () => {
-  it("calls next when secret is missing", () => {
-    const mw = createHmacSignatureMiddleware({ secretKeys: [] });
-    const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
-    const res = { status: vi.fn(), json: vi.fn() } as unknown as Response;
-    const next = vi.fn() as NextFunction;
+  it("calls next when secret is missing outside production", () => {
+    withNodeEnv("test", () => {
+      const mw = createHmacSignatureMiddleware({ secretKeys: [] });
+      const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
+      const res = { status: vi.fn(), json: vi.fn() } as unknown as Response;
+      const next = vi.fn() as NextFunction;
 
-    mw(req, res, next);
+      mw(req, res, next);
 
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+  });
+
+  it("fails closed in production when no secret is configured", () => {
+    withNodeEnv("production", () => {
+      const mw = createHmacSignatureMiddleware({ secretKeys: [] });
+      const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+      } as unknown as Response;
+      const next = vi.fn() as NextFunction;
+
+      mw(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Service Unavailable",
+        message: "Brak konfiguracji HMAC API.",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
   });
 
   it("returns 401 when header is missing", () => {

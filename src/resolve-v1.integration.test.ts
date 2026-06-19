@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import type { PrismaClient } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { MatchSettlementError } from "./services/match-settlement.service.js";
 import { createApp } from "./create-app.js";
 import type { WebSocketService } from "./services/websocket.service.js";
@@ -109,7 +110,7 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
   });
 
   function token(): string {
-    return jwt.sign({ userId: "arbiter-1" }, JWT_SECRET);
+    return jwt.sign({ userId: "arbiter-1", role: UserRole.ADMIN }, JWT_SECRET);
   }
 
   it("50 concurrent same matchId with distinct Idempotency-Key: one 200 and one settlement", async () => {
