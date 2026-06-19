@@ -26,8 +26,8 @@ function createTxMock(overrides: {
     status: "DISPUTED",
     winnerId: null,
     tournamentId: "t1",
-    playerAId: "pa",
-    playerBId: "pb",
+    playerAId: "w1",
+    playerBId: "other-player",
   };
   const queryRaw = vi.fn().mockResolvedValue([matchRow]);
   const matchFindUnique = vi.fn();
