@@ -32,5 +32,6 @@ export declare class RideFinalizeService {
     private readonly auditLogService?;
     constructor(prisma: PrismaClient, auditLogService?: AuditLogService | undefined);
     finalizeRide(input: RideFinalizeInput, req?: Request): Promise<RideFinalizeResult>;
+    assertDurableDuplicate(input: RideFinalizeInput): Promise<void>;
 }
 //# sourceMappingURL=ride-finalize.service.d.ts.map

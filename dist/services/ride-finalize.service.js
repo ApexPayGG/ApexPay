@@ -191,5 +191,47 @@ export class RideFinalizeService {
             timeout: 15000,
         });
     }
+    async assertDurableDuplicate(input) {
+        const rideId = input.rideId.trim();
+        await this.prisma.$transaction(async (tx) => {
+            const ride = await tx.safeTaxiRide.findUnique({
+                where: { id: rideId },
+                select: {
+                    id: true,
+                    driverId: true,
+                    paymentMethod: true,
+                    status: true,
+                },
+            });
+            if (ride === null) {
+                throw new RideFinalizeNotFoundError("Nie znaleziono przejazdu.");
+            }
+            const connectedAccount = await tx.connectedAccount.findUnique({
+                where: { id: input.driverConnectedAccountId },
+                select: { userId: true, integratorUserId: true, status: true },
+            });
+            if (connectedAccount === null ||
+                connectedAccount.userId === null ||
+                connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+                connectedAccount.integratorUserId !== input.integratorUserId ||
+                connectedAccount.userId !== ride.driverId) {
+                throw new RideFinalizeNotFoundError("Nie znaleziono aktywnego subkonta kierowcy.");
+            }
+            if (ride.paymentMethod !== RidePaymentMethod.CARD ||
+                ride.status !== SafeTaxiRideStatus.SETTLED) {
+                throw new RideFinalizeInvalidStateError("Przejazd nie ma potwierdzonego rozliczenia.");
+            }
+            const debit = await tx.transaction.findFirst({
+                where: {
+                    referenceId: `ride:${rideId}:debit`,
+                    type: TxType.SAFE_TAXI_PASSENGER_CHARGE,
+                },
+                select: { id: true },
+            });
+            if (debit === null) {
+                throw new RideFinalizeInvalidStateError("Brak trwałego debetu pasażera dla przejazdu.");
+            }
+        });
+    }
 }
 //# sourceMappingURL=ride-finalize.service.js.map

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { Prisma, AuditAction, AuditActorType, ConnectedAccountStatus, ConnectedAccountSubjectType, FraudCheckStatus, TransactionType as TxType, } from "@prisma/client";
 import { contextLogger } from "../lib/logger.js";
-import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
 import { decodeCursor, paginatedResponse, parsePaginationLimit, } from "../lib/pagination.js";
 import { FraudBlockedError } from "./fraud-detection.service.js";
 import { InsufficientFundsError, WalletNotFoundError } from "./wallet.service.js";
@@ -510,17 +509,12 @@ export class MarketplaceChargeService {
             if (payerWallet === null) {
                 throw new WalletNotFoundError();
             }
-            try {
-                await tx.wallet.update({
-                    where: { userId: debitUserId },
-                    data: { balance: { decrement: amountCents } },
-                });
-            }
-            catch (err) {
-                if (isInsufficientFundsDbError(err)) {
-                    throw new InsufficientFundsError();
-                }
-                throw err;
+            const debited = await tx.wallet.updateMany({
+                where: { userId: debitUserId, balance: { gte: amountCents } },
+                data: { balance: { decrement: amountCents } },
+            });
+            if (debited.count !== 1) {
+                throw new InsufficientFundsError();
             }
             const chargeId = randomUUID();
             const chargeRow = await tx.marketplaceCharge.create({

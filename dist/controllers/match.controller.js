@@ -26,11 +26,11 @@ function assertReportPlayersAllowed(match, reporterId, claimedWinnerId) {
     }
 }
 function assertResolveWinnerInMatch(match, finalWinnerId) {
-    if (!matchHasAssignedPlayers(match)) {
-        return;
+    const allowed = [match.playerAId, match.playerBId].filter((id) => id !== null);
+    if (allowed.length === 0) {
+        throw new Error("WINNER_NOT_IN_MATCH");
     }
-    const allowed = new Set([match.playerAId, match.playerBId]);
-    if (!allowed.has(finalWinnerId)) {
+    if (!allowed.includes(finalWinnerId)) {
         throw new Error("WINNER_NOT_IN_MATCH");
     }
 }

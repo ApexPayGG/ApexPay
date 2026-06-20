@@ -14,7 +14,7 @@ export class MatchSettlementError extends Error {
 }
 function winnerBelongsToAssignedMatch(match, finalWinnerId) {
     const allowed = [match.playerAId, match.playerBId].filter((id) => id !== null);
-    return allowed.length === 0 || allowed.includes(finalWinnerId);
+    return allowed.length > 0 && allowed.includes(finalWinnerId);
 }
 export class MatchSettlementService {
     prisma;
