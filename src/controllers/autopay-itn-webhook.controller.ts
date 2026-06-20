@@ -44,6 +44,7 @@ export class AutopayItnWebhookController {
   ) {}
 
   async handle(req: Request, res: Response): Promise<void> {
+    let acquiredIdempotencyKey: string | undefined;
     try {
       const rawTransactions = req.body?.transactions;
       if (typeof rawTransactions !== "string" || rawTransactions.trim().length === 0) {
@@ -64,6 +65,7 @@ export class AutopayItnWebhookController {
         res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
         return;
       }
+      acquiredIdempotencyKey = idempKey;
 
       if (itn.PaymentStatus === "SUCCESS") {
         const userId = userIdFromOrderId(itn.OrderID);
@@ -100,6 +102,19 @@ export class AutopayItnWebhookController {
 
       res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
     } catch (err) {
+      if (acquiredIdempotencyKey !== undefined) {
+        try {
+          await this.redis.del(acquiredIdempotencyKey);
+        } catch (redisErr) {
+          contextLogger().error(
+            {
+              err: redisErr instanceof Error ? redisErr.message : String(redisErr),
+              idempotencyKey: acquiredIdempotencyKey,
+            },
+            "Autopay ITN failed to release idempotency reservation",
+          );
+        }
+      }
       if (err instanceof WalletNotFoundError || err instanceof RangeError) {
         contextLogger().warn(
           { err: err.message },
