@@ -132,6 +132,8 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      playerAId: "w1",
+      playerBId: "p2",
       awardsTournamentPrize: true,
       tournament: {
         entryFee: 100n,
@@ -169,6 +171,40 @@ describe("MatchSettlementService", () => {
     expect(result.prizePaid).toBe(true);
   });
 
+  it("rejects a final winner who is not assigned to the disputed match", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      playerAId: "p1",
+      playerBId: "p2",
+      awardsTournamentPrize: true,
+      tournament: {
+        entryFee: 100n,
+        participants: [{ userId: "p1" }, { userId: "p2" }],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "attacker",
+      }),
+    ).rejects.toMatchObject({ code: "MATCH_WINNER_NOT_IN_MATCH" });
+    expect(txMocks.walletFindUnique).not.toHaveBeenCalled();
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+  });
+
   it("skips wallet payout when awardsTournamentPrize is false but still settles and advances bracket", async () => {
     txMocks = createTxMock();
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -180,6 +216,8 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      playerAId: "w1",
+      playerBId: "p2",
       awardsTournamentPrize: false,
       tournament: {
         entryFee: 100n,
@@ -220,6 +258,8 @@ describe("MatchSettlementService", () => {
           id: "m1",
           tournamentId: "t1",
           status: "DISPUTED",
+          playerAId: "w1",
+          playerBId: "p2",
           awardsTournamentPrize: true,
           tournament: {
             entryFee: 100n,

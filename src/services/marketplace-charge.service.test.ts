@@ -12,6 +12,7 @@ import {
   MarketplaceChargeService,
 } from "./marketplace-charge.service.js";
 import { FraudBlockedError } from "./fraud-detection.service.js";
+import { InsufficientFundsError } from "./wallet.service.js";
 
 describe("mergeSplitLines", () => {
   it("łączy powtórzone connectedAccountId", () => {
@@ -219,5 +220,46 @@ describe("MarketplaceChargeService.createIntegrationCharge (Redis)", () => {
     });
     expect(redis.del).toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rzuca InsufficientFundsError gdy guarded debit integratora nie zaktualizuje portfela", async () => {
+    const redis = {
+      set: vi.fn().mockResolvedValue("OK"),
+      del: vi.fn().mockResolvedValue(1),
+    };
+    const tx = {
+      paymentMethod: { findFirst: vi.fn() },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue({ id: "wal_integrator" }),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        update: vi.fn(),
+      },
+      marketplaceCharge: { create: vi.fn() },
+      transaction: { create: vi.fn() },
+      webhookOutbox: { create: vi.fn() },
+    };
+    const prisma = {
+      connectedAccount: { findMany: vi.fn() },
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+    const service = new MarketplaceChargeService(prisma);
+
+    await expect(
+      service.createIntegrationCharge({
+        redis: redis as never,
+        integratorUserId: "u1",
+        idempotencyKey: "idem-overdraw",
+        amountCents: 100n,
+        currency: "PLN",
+        splits: [],
+      }),
+    ).rejects.toBeInstanceOf(InsufficientFundsError);
+
+    expect(tx.wallet.updateMany).toHaveBeenCalledWith({
+      where: { userId: "u1", balance: { gte: 100n } },
+      data: { balance: { decrement: 100n } },
+    });
+    expect(tx.marketplaceCharge.create).not.toHaveBeenCalled();
+    expect(redis.del).toHaveBeenCalled();
   });
 });
