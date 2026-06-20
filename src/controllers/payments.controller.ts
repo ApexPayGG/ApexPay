@@ -112,17 +112,6 @@ export class PaymentsController {
         return;
       }
 
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
-      if (idemSet === null) {
-        res.status(200).json({
-          rideId: body.ride_id,
-          duplicate: true,
-        });
-        return;
-      }
-      acquiredIdempotencyKey = idempotencyKey;
-
       const finalizeInput = {
         rideId: body.ride_id,
         baseAmountGrosze: body.base_amount_grosze,
@@ -136,6 +125,23 @@ export class PaymentsController {
           ? { passengerRatingStars: body.passenger_rating_stars }
           : {}),
       };
+      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      if (idemSet === null) {
+        try {
+          await this.rideFinalizeService.assertDurableDuplicate(finalizeInput);
+        } catch (err) {
+          await this.redis.del(idempotencyKey);
+          throw err;
+        }
+        res.status(200).json({
+          rideId: body.ride_id,
+          duplicate: true,
+        });
+        return;
+      }
+      acquiredIdempotencyKey = idempotencyKey;
+
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
 
       res.status(201).json({

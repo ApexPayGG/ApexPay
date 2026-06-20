@@ -59,15 +59,15 @@ export class AutopayItnWebhookController {
         return;
       }
 
-      const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-      const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
-      if (setOk !== "OK") {
-        res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
-        return;
-      }
-      acquiredIdempotencyKey = idempKey;
-
       if (itn.PaymentStatus === "SUCCESS") {
+        const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
+        const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
+        if (setOk !== "OK") {
+          res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+          return;
+        }
+        acquiredIdempotencyKey = idempKey;
+
         const userId = userIdFromOrderId(itn.OrderID);
         const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
         if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
