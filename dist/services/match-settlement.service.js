@@ -12,6 +12,10 @@ export class MatchSettlementError extends Error {
         this.name = "MatchSettlementError";
     }
 }
+function winnerBelongsToAssignedMatch(match, finalWinnerId) {
+    const allowed = [match.playerAId, match.playerBId].filter((id) => id !== null);
+    return allowed.length === 0 || allowed.includes(finalWinnerId);
+}
 export class MatchSettlementService {
     prisma;
     bracketService;
@@ -57,6 +61,9 @@ export class MatchSettlementService {
                         });
                         if (!match?.tournament) {
                             throw new Error("CRITICAL: Brak danych do rozliczenia.");
+                        }
+                        if (!winnerBelongsToAssignedMatch(match, finalWinnerId)) {
+                            throw new MatchSettlementError("MATCH_WINNER_NOT_IN_MATCH");
                         }
                         const t = match.tournament;
                         const participantsCount = BigInt(t.participants.length);

@@ -59,6 +59,10 @@ export class MatchResolveV1Controller {
                     res.status(409).json({ error: "Mecz nie może być rozliczony w tym stanie." });
                     return;
                 }
+                if (error.code === "MATCH_WINNER_NOT_IN_MATCH") {
+                    res.status(400).json({ error: "Zwycięzca musi być jednym z graczy tego meczu." });
+                    return;
+                }
             }
             if (typeof msg === "string" &&
                 (msg.startsWith("CRITICAL:") || msg.includes("CRITICAL"))) {

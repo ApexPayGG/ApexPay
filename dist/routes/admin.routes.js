@@ -1,5 +1,5 @@
 import { Router } from "express";
-export function createAdminRouter(adminController, disputeAdminController, fraudAdminController, webhookDeadLetterAdminController) {
+export function createAdminRouter(adminController, disputeAdminController, fraudAdminController, webhookDeadLetterAdminController, adminAnalyticsController) {
     const router = Router();
     router.get("/audit-logs", (req, res) => {
         void adminController.listAuditLogs(req, res);
@@ -36,6 +36,18 @@ export function createAdminRouter(adminController, disputeAdminController, fraud
     });
     router.post("/webhook-dead-letters/:id/requeue", (req, res) => {
         void webhookDeadLetterAdminController.requeue(req, res);
+    });
+    router.get("/analytics/overview", (req, res) => {
+        void adminAnalyticsController.overview(req, res);
+    });
+    router.get("/analytics/revenue-chart", (req, res) => {
+        void adminAnalyticsController.revenueChart(req, res);
+    });
+    router.get("/analytics/fraud-chart", (req, res) => {
+        void adminAnalyticsController.fraudChart(req, res);
+    });
+    router.get("/users-wallets", (req, res) => {
+        void adminController.listUsersWithWallets(req, res);
     });
     return router;
 }

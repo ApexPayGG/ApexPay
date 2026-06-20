@@ -199,8 +199,11 @@ export class MatchController {
                 if (!match) {
                     throw new Error("MATCH_NOT_FOUND");
                 }
-                if (match.status === "RESOLVED") {
+                if (match.status === "RESOLVED" || match.status === "SETTLED") {
                     throw new Error("ALREADY_RESOLVED");
+                }
+                if (match.status !== "DISPUTED") {
+                    throw new Error("MATCH_NOT_DISPUTED");
                 }
                 assertResolveWinnerInMatch(match, winnerId);
                 const tournamentId = match.tournamentId;
@@ -242,6 +245,10 @@ export class MatchController {
             }
             if (msg === "ALREADY_RESOLVED") {
                 res.status(409).json({ error: "Mecz jest już rozstrzygnięty." });
+                return;
+            }
+            if (msg === "MATCH_NOT_DISPUTED") {
+                res.status(409).json({ error: "Mecz nie jest w stanie sporu." });
                 return;
             }
             if (msg === "WINNER_NOT_IN_MATCH") {

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, TransactionType as TxType } from "@prisma/client";
-import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
 export class InsufficientFundsError extends Error {
     constructor() {
         super("Insufficient funds");
@@ -104,17 +103,12 @@ export class WalletService {
             if (fromWallet === null || toWallet === null) {
                 throw new WalletNotFoundError();
             }
-            try {
-                await tx.wallet.update({
-                    where: { userId: fromUserId },
-                    data: { balance: { decrement: amount } },
-                });
-            }
-            catch (err) {
-                if (isInsufficientFundsDbError(err)) {
-                    throw new InsufficientFundsError();
-                }
-                throw err;
+            const debited = await tx.wallet.updateMany({
+                where: { userId: fromUserId, balance: { gte: amount } },
+                data: { balance: { decrement: amount } },
+            });
+            if (debited.count !== 1) {
+                throw new InsufficientFundsError();
             }
             await tx.wallet.update({
                 where: { userId: toUserId },
@@ -249,24 +243,23 @@ export class WalletService {
             if (existing !== null) {
                 return existing;
             }
-            let walletId;
-            try {
-                const updated = await tx.wallet.update({
-                    where: { userId },
-                    data: { balance: { decrement: amount } },
-                    select: { id: true },
-                });
-                walletId = updated.id;
+            const wallet = await tx.wallet.findUnique({
+                where: { userId },
+                select: { id: true },
+            });
+            if (wallet === null) {
+                throw new WalletNotFoundError();
             }
-            catch (err) {
-                if (isInsufficientFundsDbError(err)) {
-                    throw new InsufficientFundsError();
-                }
-                throw err;
+            const debited = await tx.wallet.updateMany({
+                where: { userId, balance: { gte: amount } },
+                data: { balance: { decrement: amount } },
+            });
+            if (debited.count !== 1) {
+                throw new InsufficientFundsError();
             }
             return await tx.transaction.create({
                 data: {
-                    walletId,
+                    walletId: wallet.id,
                     amount: -amount,
                     referenceId,
                     type: TxType.FEE,

@@ -261,17 +261,15 @@ export class MarketplaceChargeService {
                 if (integratorWallet === null) {
                     throw new WalletNotFoundError();
                 }
-                try {
-                    await tx.wallet.update({
-                        where: { userId: params.integratorUserId },
-                        data: { balance: { decrement: params.amountCents } },
-                    });
-                }
-                catch (err) {
-                    if (isInsufficientFundsDbError(err)) {
-                        throw new InsufficientFundsError();
-                    }
-                    throw err;
+                const debited = await tx.wallet.updateMany({
+                    where: {
+                        userId: params.integratorUserId,
+                        balance: { gte: params.amountCents },
+                    },
+                    data: { balance: { decrement: params.amountCents } },
+                });
+                if (debited.count !== 1) {
+                    throw new InsufficientFundsError();
                 }
                 const chargeId = randomUUID();
                 const chargeRow = await tx.marketplaceCharge.create({

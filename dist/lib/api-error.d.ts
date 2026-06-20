@@ -8,6 +8,7 @@ export declare const ApiErrorCode: {
     readonly CONFLICT: "CONFLICT";
     readonly PAYMENT_REQUIRED: "PAYMENT_REQUIRED";
     readonly TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS";
+    readonly SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE";
     readonly INTERNAL: "INTERNAL_ERROR";
 };
 export type ApiErrorCodeType = (typeof ApiErrorCode)[keyof typeof ApiErrorCode];
