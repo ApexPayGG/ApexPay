@@ -205,6 +205,40 @@ describe("MatchSettlementService", () => {
     expect(txMocks.matchUpdate).not.toHaveBeenCalled();
   });
 
+  it("rejects settlement when the disputed match has no assigned players", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      playerAId: null,
+      playerBId: null,
+      awardsTournamentPrize: true,
+      tournament: {
+        entryFee: 100n,
+        participants: [],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "attacker",
+      }),
+    ).rejects.toMatchObject({ code: "MATCH_WINNER_NOT_IN_MATCH" });
+    expect(txMocks.walletFindUnique).not.toHaveBeenCalled();
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+  });
+
   it("skips wallet payout when awardsTournamentPrize is false but still settles and advances bracket", async () => {
     txMocks = createTxMock();
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(

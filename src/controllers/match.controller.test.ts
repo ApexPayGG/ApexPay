@@ -460,6 +460,32 @@ describe("MatchController.resolveDispute", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 400 when resolving a match without assigned players", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "DISPUTED",
+      winnerId: null,
+      playerAId: null,
+      playerBId: null,
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "outsider" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    errSpy.mockRestore();
+  });
+
   it("returns 200 and runs payout in same tx", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",

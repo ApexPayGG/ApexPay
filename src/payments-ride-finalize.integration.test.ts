@@ -77,6 +77,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         update: vi.fn().mockResolvedValue({}),
       },
       transaction: {
+        findFirst: vi.fn().mockResolvedValue({ id: "t_debit" }),
         create: vi.fn().mockImplementation((args: { data: { referenceId: string; amount: bigint; type: string } }) => {
           createdTransactions.push({
             referenceId: args.data.referenceId,
@@ -201,8 +202,10 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("200 duplicate:true dla duplikatu ride_id", async () => {
-    const { prisma } = buildContext();
+  it("200 duplicate:true only when Redis duplicate is backed by durable settled ride state", async () => {
+    const { prisma, tx } = buildContext({
+      ride: { status: SafeTaxiRideStatus.SETTLED },
+    });
     const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
@@ -210,6 +213,30 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       .send(payload);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+    expect(tx.transaction.findFirst).toHaveBeenCalledWith({
+      where: {
+        referenceId: "ride:ride_1:debit",
+        type: "SAFE_TAXI_PASSENGER_CHARGE",
+      },
+      select: { id: true },
+    });
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("409 i zwalnia Redis gdy duplicate nie ma durable settlement", async () => {
+    const { prisma, tx } = buildContext();
+    tx.transaction.findFirst.mockResolvedValue(null);
+    const redis = makeRedis(null);
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(409);
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
   });
 
   it("402 gdy portfel pasażera nie pokrywa base+tip i zwalnia idempotency reservation", async () => {

@@ -263,3 +263,49 @@ describe("MarketplaceChargeService.createIntegrationCharge (Redis)", () => {
     expect(redis.del).toHaveBeenCalled();
   });
 });
+
+describe("MarketplaceChargeService.chargeSplit", () => {
+  it("rzuca InsufficientFundsError gdy guarded debit płatnika nie zaktualizuje portfela", async () => {
+    const connectedAccountFindMany = vi.fn().mockResolvedValue([
+      {
+        id: "ca1",
+        userId: "seller1",
+        status: ConnectedAccountStatus.ACTIVE,
+      },
+    ]);
+    const tx = {
+      marketplaceCharge: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn(),
+      },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue({ id: "payer_wallet" }),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        update: vi.fn(),
+      },
+      transaction: { create: vi.fn() },
+    };
+    const prisma = {
+      marketplaceCharge: { findUnique: vi.fn().mockResolvedValue(null) },
+      connectedAccount: { findMany: connectedAccountFindMany },
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+    const service = new MarketplaceChargeService(prisma);
+
+    await expect(
+      service.chargeSplit({
+        debitUserId: "payer1",
+        amountCents: 100n,
+        splits: [{ connectedAccountId: "ca1", amountCents: 100n }],
+        idempotencyKey: "admin-overdraw",
+      }),
+    ).rejects.toBeInstanceOf(InsufficientFundsError);
+
+    expect(tx.wallet.updateMany).toHaveBeenCalledWith({
+      where: { userId: "payer1", balance: { gte: 100n } },
+      data: { balance: { decrement: 100n } },
+    });
+    expect(tx.marketplaceCharge.create).not.toHaveBeenCalled();
+    expect(tx.transaction.create).not.toHaveBeenCalled();
+  });
+});
