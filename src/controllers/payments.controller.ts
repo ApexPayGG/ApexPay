@@ -5,9 +5,11 @@ import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
   RideFinalizeConfigError,
+  RideFinalizeInvalidStateError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -98,6 +100,7 @@ export class PaymentsController {
       return;
     }
 
+    let acquiredIdempotencyKey: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -105,16 +108,6 @@ export class PaymentsController {
           error:
             "Nieprawidłowy split: platform_commission_grosze + driver_base_payout_grosze musi równać się base_amount_grosze.",
           code: "BAD_REQUEST",
-        });
-        return;
-      }
-
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
-      if (idemSet === null) {
-        res.status(200).json({
-          rideId: body.ride_id,
-          duplicate: true,
         });
         return;
       }
@@ -127,10 +120,23 @@ export class PaymentsController {
         tipAmountGrosze: body.tip_amount_grosze,
         tipSettlement: body.tip_settlement,
         driverConnectedAccountId: body.driver_connected_account_id,
+        integratorUserId: userId,
         ...(body.passenger_rating_stars !== undefined
           ? { passengerRatingStars: body.passenger_rating_stars }
           : {}),
       };
+      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      if (idemSet === null) {
+        await this.rideFinalizeService.assertDurableDuplicate(finalizeInput);
+        res.status(200).json({
+          rideId: body.ride_id,
+          duplicate: true,
+        });
+        return;
+      }
+      acquiredIdempotencyKey = idempotencyKey;
+
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
 
       res.status(201).json({
@@ -141,12 +147,27 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (acquiredIdempotencyKey !== undefined) {
+        try {
+          await this.redis.del(acquiredIdempotencyKey);
+        } catch (redisErr) {
+          console.error("[payments/ride-finalize] failed to release idempotency", redisErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
       }
+      if (err instanceof InsufficientFundsError) {
+        res.status(402).json({ error: "Niewystarczające środki.", code: "PAYMENT_REQUIRED" });
+        return;
+      }
       if (err instanceof RideFinalizeNotFoundError) {
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
+        return;
+      }
+      if (err instanceof RideFinalizeInvalidStateError) {
+        res.status(409).json({ error: err.message, code: "CONFLICT" });
         return;
       }
       if (err instanceof RideFinalizeConfigError) {

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient, Transaction, TransactionType } from "@prisma/client";
 import { Prisma, TransactionType as TxType } from "@prisma/client";
-import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
 
 export class InsufficientFundsError extends Error {
   constructor() {
@@ -134,16 +133,12 @@ export class WalletService {
         throw new WalletNotFoundError();
       }
 
-      try {
-        await tx.wallet.update({
-          where: { userId: fromUserId },
-          data: { balance: { decrement: amount } },
-        });
-      } catch (err) {
-        if (isInsufficientFundsDbError(err)) {
-          throw new InsufficientFundsError();
-        }
-        throw err;
+      const debited = await tx.wallet.updateMany({
+        where: { userId: fromUserId, balance: { gte: amount } },
+        data: { balance: { decrement: amount } },
+      });
+      if (debited.count !== 1) {
+        throw new InsufficientFundsError();
       }
 
       await tx.wallet.update({
@@ -316,24 +311,24 @@ export class WalletService {
         return existing;
       }
 
-      let walletId: string;
-      try {
-        const updated = await tx.wallet.update({
-          where: { userId },
-          data: { balance: { decrement: amount } },
-          select: { id: true },
-        });
-        walletId = updated.id;
-      } catch (err) {
-        if (isInsufficientFundsDbError(err)) {
-          throw new InsufficientFundsError();
-        }
-        throw err;
+      const wallet = await tx.wallet.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      if (wallet === null) {
+        throw new WalletNotFoundError();
+      }
+      const debited = await tx.wallet.updateMany({
+        where: { userId, balance: { gte: amount } },
+        data: { balance: { decrement: amount } },
+      });
+      if (debited.count !== 1) {
+        throw new InsufficientFundsError();
       }
 
       return await tx.transaction.create({
         data: {
-          walletId,
+          walletId: wallet.id,
           amount: -amount,
           referenceId,
           type: TxType.FEE,

@@ -14,7 +14,6 @@ import {
   TransactionType as TxType,
 } from "@prisma/client";
 import { contextLogger } from "../lib/logger.js";
-import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
 import type { AuditLogService } from "./audit-log.service.js";
 import {
   decodeCursor,
@@ -347,16 +346,15 @@ export class MarketplaceChargeService {
             throw new WalletNotFoundError();
           }
 
-          try {
-            await tx.wallet.update({
-              where: { userId: params.integratorUserId },
-              data: { balance: { decrement: params.amountCents } },
-            });
-          } catch (err) {
-            if (isInsufficientFundsDbError(err)) {
-              throw new InsufficientFundsError();
-            }
-            throw err;
+          const debited = await tx.wallet.updateMany({
+            where: {
+              userId: params.integratorUserId,
+              balance: { gte: params.amountCents },
+            },
+            data: { balance: { decrement: params.amountCents } },
+          });
+          if (debited.count !== 1) {
+            throw new InsufficientFundsError();
           }
 
           const chargeId = randomUUID();
@@ -651,16 +649,12 @@ export class MarketplaceChargeService {
           throw new WalletNotFoundError();
         }
 
-        try {
-          await tx.wallet.update({
-            where: { userId: debitUserId },
-            data: { balance: { decrement: amountCents } },
-          });
-        } catch (err) {
-          if (isInsufficientFundsDbError(err)) {
-            throw new InsufficientFundsError();
-          }
-          throw err;
+        const debited = await tx.wallet.updateMany({
+          where: { userId: debitUserId, balance: { gte: amountCents } },
+          data: { balance: { decrement: amountCents } },
+        });
+        if (debited.count !== 1) {
+          throw new InsufficientFundsError();
         }
 
         const chargeId = randomUUID();

@@ -39,6 +39,7 @@ describe("MarketplaceChargeService — audyt po createIntegrationCharge", () => 
             paymentMethod: { findFirst: vi.fn() },
             wallet: {
               findUnique: vi.fn().mockResolvedValue({ id: "w_int" }),
+              updateMany: vi.fn().mockResolvedValue({ count: 1 }),
               update: vi.fn().mockResolvedValue({}),
             },
             marketplaceCharge: {

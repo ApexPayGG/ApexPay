@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import { UserRole } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
 import { MatchSettlementError } from "./services/match-settlement.service.js";
 import { createApp } from "./create-app.js";
@@ -108,9 +109,54 @@ describe("POST /api/v1/matches/:id/resolve (integration)", () => {
     });
   });
 
-  function token(): string {
-    return jwt.sign({ userId: "arbiter-1" }, JWT_SECRET);
+  function token(role: UserRole = UserRole.ADMIN): string {
+    return jwt.sign({ userId: "arbiter-1", role }, JWT_SECRET);
   }
+
+  it("rejects non-admin JWTs before v1 settlement", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/v1/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${token(UserRole.PLAYER)}`)
+      .set("Idempotency-Key", "non-admin")
+      .send({ finalWinnerId: "winner-1" });
+
+    expect(res.status).toBe(403);
+    expect(settleDisputedMatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-admin JWTs before legacy settlement", async () => {
+    const redis = new FakeRedis() as unknown as import("ioredis").default;
+    const wsService = {
+      notifyWallet: vi.fn(),
+    } as unknown as WebSocketService;
+
+    const { app } = createApp({
+      prisma: {} as PrismaClient,
+      redis,
+      wsService,
+      matchSettlementService: { settleDisputedMatch },
+    });
+
+    const res = await request(app)
+      .post("/api/matches/match-race-1/resolve")
+      .set("Authorization", `Bearer ${token(UserRole.PLAYER)}`)
+      .send({ finalWinnerId: "winner-1" });
+
+    expect(res.status).toBe(403);
+    expect(settleDisputedMatch).not.toHaveBeenCalled();
+  });
 
   it("50 concurrent same matchId with distinct Idempotency-Key: one 200 and one settlement", async () => {
     const redis = new FakeRedis() as unknown as import("ioredis").default;

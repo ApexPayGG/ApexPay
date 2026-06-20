@@ -42,11 +42,13 @@ function assertResolveWinnerInMatch(
   match: { playerAId: string | null; playerBId: string | null },
   finalWinnerId: string,
 ): void {
-  if (!matchHasAssignedPlayers(match)) {
-    return;
+  const allowed = [match.playerAId, match.playerBId].filter(
+    (id): id is string => id !== null,
+  );
+  if (allowed.length === 0) {
+    throw new Error("WINNER_NOT_IN_MATCH");
   }
-  const allowed = new Set([match.playerAId, match.playerBId]);
-  if (!allowed.has(finalWinnerId)) {
+  if (!allowed.includes(finalWinnerId)) {
     throw new Error("WINNER_NOT_IN_MATCH");
   }
 }
@@ -272,8 +274,11 @@ export class MatchController {
           if (!match) {
             throw new Error("MATCH_NOT_FOUND");
           }
-          if (match.status === "RESOLVED") {
+          if (match.status === "RESOLVED" || match.status === "SETTLED") {
             throw new Error("ALREADY_RESOLVED");
+          }
+          if (match.status !== "DISPUTED") {
+            throw new Error("MATCH_NOT_DISPUTED");
           }
 
           assertResolveWinnerInMatch(match, winnerId);
@@ -336,6 +341,11 @@ export class MatchController {
 
       if (msg === "ALREADY_RESOLVED") {
         res.status(409).json({ error: "Mecz jest już rozstrzygnięty." });
+        return;
+      }
+
+      if (msg === "MATCH_NOT_DISPUTED") {
+        res.status(409).json({ error: "Mecz nie jest w stanie sporu." });
         return;
       }
 

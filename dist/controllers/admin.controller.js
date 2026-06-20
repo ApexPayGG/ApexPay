@@ -31,10 +31,12 @@ export class AdminController {
     walletService;
     payoutService;
     auditLogService;
-    constructor(walletService, payoutService, auditLogService) {
+    prisma;
+    constructor(walletService, payoutService, auditLogService, prisma) {
         this.walletService = walletService;
         this.payoutService = payoutService;
         this.auditLogService = auditLogService;
+        this.prisma = prisma;
     }
     /** Dziennik audytu — filtry + kursor (createdAt desc). */
     async listAuditLogs(req, res) {
@@ -154,6 +156,45 @@ export class AdminController {
                 error: "Błąd serwera przy pobieraniu listy transakcji.",
                 code: "INTERNAL_ERROR",
             });
+        }
+    }
+    async listUsersWithWallets(req, res) {
+        try {
+            const limitRaw = Number.parseInt(String(req.query.limit ?? "50"), 10);
+            const limit = Number.isFinite(limitRaw)
+                ? Math.min(100, Math.max(1, limitRaw))
+                : 50;
+            const [users, total] = await Promise.all([
+                this.prisma.user.findMany({
+                    take: limit,
+                    orderBy: { createdAt: "desc" },
+                    select: {
+                        id: true,
+                        email: true,
+                        role: true,
+                        createdAt: true,
+                        wallet: {
+                            select: { id: true, balance: true },
+                        },
+                    },
+                }),
+                this.prisma.user.count(),
+            ]);
+            res.status(200).json({
+                items: users.map((u) => ({
+                    userId: u.id,
+                    email: u.email,
+                    role: u.role,
+                    walletId: u.wallet?.id ?? null,
+                    balance: u.wallet?.balance?.toString() ?? "0",
+                    createdAt: u.createdAt.toISOString(),
+                })),
+                total,
+            });
+        }
+        catch (err) {
+            console.error("[admin/users-wallets]", err);
+            res.status(500).json({ error: "Internal server error" });
         }
     }
     /** Rozliczenie wypłaty B2B (PAID / FAILED ze zwrotem na portfel subkonta). */

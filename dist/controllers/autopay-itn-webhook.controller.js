@@ -39,6 +39,7 @@ export class AutopayItnWebhookController {
         this.redis = redis;
     }
     async handle(req, res) {
+        let acquiredIdempotencyKey;
         try {
             const rawTransactions = req.body?.transactions;
             if (typeof rawTransactions !== "string" || rawTransactions.trim().length === 0) {
@@ -51,13 +52,14 @@ export class AutopayItnWebhookController {
                 res.status(200).type("application/xml").send(errorXml("INVALID_HASH"));
                 return;
             }
-            const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-            const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
-            if (setOk !== "OK") {
-                res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
-                return;
-            }
             if (itn.PaymentStatus === "SUCCESS") {
+                const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
+                const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
+                if (setOk !== "OK") {
+                    res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
+                    return;
+                }
+                acquiredIdempotencyKey = idempKey;
                 const userId = userIdFromOrderId(itn.OrderID);
                 const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
                 if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
@@ -91,6 +93,17 @@ export class AutopayItnWebhookController {
             res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
         }
         catch (err) {
+            if (acquiredIdempotencyKey !== undefined) {
+                try {
+                    await this.redis.del(acquiredIdempotencyKey);
+                }
+                catch (redisErr) {
+                    contextLogger().error({
+                        err: redisErr instanceof Error ? redisErr.message : String(redisErr),
+                        idempotencyKey: acquiredIdempotencyKey,
+                    }, "Autopay ITN failed to release idempotency reservation");
+                }
+            }
             if (err instanceof WalletNotFoundError || err instanceof RangeError) {
                 contextLogger().warn({ err: err.message }, "Autopay ITN invalid business payload");
                 res.status(200).type("application/xml").send(errorXml("BAD_REQUEST"));

@@ -13,6 +13,7 @@ type TxMock = {
   wallet: {
     findUnique: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
   };
   transaction: {
     findFirst: ReturnType<typeof vi.fn>;
@@ -25,6 +26,7 @@ function createTxMock(overrides: Partial<TxMock> = {}): TxMock {
     wallet: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       ...overrides.wallet,
     },
     transaction: {
@@ -56,7 +58,8 @@ describe("WalletService.processEntryFee", () => {
     const referenceId = "match-lobby-7";
 
     lastTx.transaction.findFirst.mockResolvedValue(null);
-    lastTx.wallet.update.mockResolvedValue({ id: "wal_1" });
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_1" });
+    lastTx.wallet.updateMany.mockResolvedValue({ count: 1 });
     const created = {
       id: "txn_1",
       walletId: "wal_1",
@@ -70,12 +73,11 @@ describe("WalletService.processEntryFee", () => {
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(lastTx.transaction.findFirst).toHaveBeenCalled();
-    expect(lastTx.wallet.update).toHaveBeenCalledTimes(1);
-    expect(lastTx.wallet.update).toHaveBeenCalledWith(
+    expect(lastTx.wallet.updateMany).toHaveBeenCalledTimes(1);
+    expect(lastTx.wallet.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { userId },
+        where: { userId, balance: { gte: amount } },
         data: { balance: { decrement: amount } },
-        select: { id: true },
       }),
     );
     expect(lastTx.transaction.create).toHaveBeenCalledWith(
@@ -90,26 +92,34 @@ describe("WalletService.processEntryFee", () => {
     expect(result).toEqual(created);
   });
 
-  it("throws InsufficientFundsError when wallet.update fails (e.g. CHECK constraint / brak wiersza)", async () => {
+  it("throws InsufficientFundsError when the guarded debit updates no wallet row", async () => {
     const userId = "usr_2";
     const amount = 50n;
     const referenceId = "match-lobby-8";
 
     lastTx.transaction.findFirst.mockResolvedValue(null);
-    lastTx.wallet.update.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError(
-        'Check constraint "wallet_balance_check" violated',
-        {
-          code: "P2034",
-          clientVersion: "test",
-        },
-      ),
-    );
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_2" });
+    lastTx.wallet.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(service.processEntryFee(userId, amount, referenceId)).rejects.toBeInstanceOf(
       InsufficientFundsError,
     );
 
+    expect(lastTx.wallet.updateMany).toHaveBeenCalledWith({
+      where: { userId, balance: { gte: amount } },
+      data: { balance: { decrement: amount } },
+    });
+    expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("throws WalletNotFoundError before debit when wallet row is missing", async () => {
+    lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValue(null);
+
+    await expect(service.processEntryFee("missing", 10n, "match-lobby-9")).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+    expect(lastTx.wallet.updateMany).not.toHaveBeenCalled();
     expect(lastTx.transaction.create).not.toHaveBeenCalled();
   });
 
@@ -354,6 +364,7 @@ describe("WalletService.transferP2P", () => {
     lastTx.transaction.findFirst.mockResolvedValue({ id: "existing" });
     const r = await service.transferP2P("a", "b", 5n, "idem-1");
     expect(r).toEqual({ idempotent: true });
+    expect(lastTx.wallet.updateMany).not.toHaveBeenCalled();
     expect(lastTx.wallet.update).not.toHaveBeenCalled();
   });
 
@@ -362,12 +373,17 @@ describe("WalletService.transferP2P", () => {
     lastTx.wallet.findUnique
       .mockResolvedValueOnce({ id: "wf" })
       .mockResolvedValueOnce({ id: "wt" });
+    lastTx.wallet.updateMany.mockResolvedValue({ count: 1 });
     lastTx.wallet.update.mockResolvedValue({});
     lastTx.transaction.create.mockResolvedValue({ id: "tx" });
 
     const r = await service.transferP2P("from-u", "to-u", 100n, "x-1");
     expect(r).toEqual({ idempotent: false });
-    expect(lastTx.wallet.update).toHaveBeenCalledTimes(2);
+    expect(lastTx.wallet.updateMany).toHaveBeenCalledWith({
+      where: { userId: "from-u", balance: { gte: 100n } },
+      data: { balance: { decrement: 100n } },
+    });
+    expect(lastTx.wallet.update).toHaveBeenCalledTimes(1);
     expect(lastTx.transaction.create).toHaveBeenCalledTimes(2);
     expect(lastTx.transaction.findFirst).toHaveBeenCalledWith({
       where: { referenceId: "p2p:x-1:out" },
@@ -418,19 +434,17 @@ describe("WalletService.transferP2P", () => {
     );
   });
 
-  it("throws InsufficientFundsError when debit fails with P2025", async () => {
+  it("throws InsufficientFundsError when the guarded sender debit updates no row", async () => {
     lastTx.transaction.findFirst.mockResolvedValue(null);
     lastTx.wallet.findUnique
       .mockResolvedValueOnce({ id: "wf" })
       .mockResolvedValueOnce({ id: "wt" });
-    const p2025 = new Prisma.PrismaClientKnownRequestError("insufficient", {
-      code: "P2025",
-      clientVersion: "test",
-    });
-    lastTx.wallet.update.mockRejectedValueOnce(p2025);
+    lastTx.wallet.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.transferP2P("a", "b", 10n, "pay-x")).rejects.toBeInstanceOf(
       InsufficientFundsError,
     );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+    expect(lastTx.transaction.create).not.toHaveBeenCalled();
   });
 });
 
