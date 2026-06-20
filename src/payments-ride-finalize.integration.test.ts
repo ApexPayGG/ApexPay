@@ -223,7 +223,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     expect(tx.wallet.updateMany).not.toHaveBeenCalled();
   });
 
-  it("409 i zwalnia Redis gdy duplicate nie ma durable settlement", async () => {
+  it("409 bez zwalniania Redis gdy duplicate może być w toku i nie ma jeszcze durable settlement", async () => {
     const { prisma, tx } = buildContext();
     tx.transaction.findFirst.mockResolvedValue(null);
     const redis = makeRedis(null);
@@ -236,7 +236,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
     expect(res.status).toBe(409);
     expect(tx.wallet.updateMany).not.toHaveBeenCalled();
-    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
+    expect(redis.del).not.toHaveBeenCalled();
   });
 
   it("402 gdy portfel pasażera nie pokrywa base+tip i zwalnia idempotency reservation", async () => {
