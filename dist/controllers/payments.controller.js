@@ -113,13 +113,7 @@ export class PaymentsController {
             const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
             const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
             if (idemSet === null) {
-                try {
-                    await this.rideFinalizeService.assertDurableDuplicate(finalizeInput);
-                }
-                catch (err) {
-                    await this.redis.del(idempotencyKey);
-                    throw err;
-                }
+                await this.rideFinalizeService.assertDurableDuplicate(finalizeInput);
                 res.status(200).json({
                     rideId: body.ride_id,
                     duplicate: true,
