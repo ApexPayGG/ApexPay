@@ -492,6 +492,8 @@ describe("MatchController.resolveDispute", () => {
       tournamentId: "t1",
       status: "DISPUTED",
       winnerId: null,
+      playerAId: "winner-1",
+      playerBId: "opponent-1",
     });
     h.matchUpdate.mockResolvedValue({});
     const res = mockRes();
@@ -533,6 +535,8 @@ describe("MatchController.resolveDispute", () => {
       tournamentId: "t1",
       status: "DISPUTED",
       winnerId: null,
+      playerAId: "winner-1",
+      playerBId: "opponent-1",
     });
     h.matchUpdate.mockResolvedValue({});
     const res = mockRes();
