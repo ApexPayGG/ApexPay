@@ -90,6 +90,12 @@ export class MatchSettlementService {
             if (!match?.tournament) {
               throw new Error("CRITICAL: Brak danych do rozliczenia.");
             }
+            if (
+              finalWinnerId !== match.playerAId &&
+              finalWinnerId !== match.playerBId
+            ) {
+              throw new MatchSettlementError("WINNER_NOT_IN_MATCH");
+            }
 
             const t = match.tournament;
             const participantsCount = BigInt(t.participants.length);
