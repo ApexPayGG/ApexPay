@@ -120,6 +120,42 @@ describe("MatchSettlementService", () => {
     ).rejects.toMatchObject({ code: "MATCH_NOT_DISPUTED" });
   });
 
+  it("throws WINNER_NOT_IN_MATCH before payout when finalWinnerId is not assigned", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.walletFindUnique.mockResolvedValue({ id: "wal-out", userId: "outsider" });
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      playerAId: "pa",
+      playerBId: "pb",
+      awardsTournamentPrize: true,
+      tournament: {
+        entryFee: 100n,
+        participants: [{ userId: "pa" }, { userId: "pb" }],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "outsider",
+      }),
+    ).rejects.toMatchObject({ code: "WINNER_NOT_IN_MATCH" });
+    expect(txMocks.walletUpdate).not.toHaveBeenCalled();
+    expect(txMocks.transactionCreate).not.toHaveBeenCalled();
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+  });
+
   it("locks match, updates wallets, ledger, outbox, and sets SETTLED", async () => {
     txMocks = createTxMock();
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -132,6 +168,8 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      playerAId: "w1",
+      playerBId: "b",
       awardsTournamentPrize: true,
       tournament: {
         entryFee: 100n,
@@ -180,6 +218,8 @@ describe("MatchSettlementService", () => {
       id: "m1",
       tournamentId: "t1",
       status: "DISPUTED",
+      playerAId: "w1",
+      playerBId: "b",
       awardsTournamentPrize: false,
       tournament: {
         entryFee: 100n,
@@ -220,6 +260,8 @@ describe("MatchSettlementService", () => {
           id: "m1",
           tournamentId: "t1",
           status: "DISPUTED",
+          playerAId: "w1",
+          playerBId: "b",
           awardsTournamentPrize: true,
           tournament: {
             entryFee: 100n,
