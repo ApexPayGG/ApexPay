@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { PrismaClient, Prisma, UserRole } from "@prisma/client";
 import { ClearingService } from "../services/clearing.service.js";
 import { TournamentBracketService } from "../services/tournament-bracket.service.js";
 import type { WebSocketService } from "../services/websocket.service.js";
@@ -264,6 +264,12 @@ export class MatchController {
 
       const matchId = rawMatchId.trim();
       const winnerId = finalWinnerId.trim();
+      const role = (req as { user?: { role?: string } }).user?.role;
+
+      if (role !== UserRole.ADMIN) {
+        res.status(403).json({ error: "Brak uprawnień do rozstrzygania sporów." });
+        return;
+      }
 
       let prizePaid = false;
       await this.prisma.$transaction(
@@ -272,8 +278,8 @@ export class MatchController {
           if (!match) {
             throw new Error("MATCH_NOT_FOUND");
           }
-          if (match.status === "RESOLVED") {
-            throw new Error("ALREADY_RESOLVED");
+          if (match.status !== "DISPUTED") {
+            throw new Error("MATCH_NOT_DISPUTED");
           }
 
           assertResolveWinnerInMatch(match, winnerId);
@@ -334,8 +340,8 @@ export class MatchController {
         return;
       }
 
-      if (msg === "ALREADY_RESOLVED") {
-        res.status(409).json({ error: "Mecz jest już rozstrzygnięty." });
+      if (msg === "MATCH_NOT_DISPUTED") {
+        res.status(409).json({ error: "Mecz nie jest w aktywnym sporze." });
         return;
       }
 

@@ -18,23 +18,6 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(tournamentPool) });
 const MIN_ENTRY_FEE_CENTS = 500;
 const MAX_PLAYERS_CAP = 1000;
 
-function isInsufficientFundsDbError(err: unknown): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) {
-    return false;
-  }
-  if (err.code === "P2025") {
-    return true;
-  }
-  if (err.message.includes("wallet_balance_check")) {
-    return true;
-  }
-  const meta = err.meta as { constraint?: string } | undefined;
-  if (meta?.constraint === "wallet_balance_check") {
-    return true;
-  }
-  return false;
-}
-
 function joinErrorMessage(err: unknown): string | undefined {
   return err instanceof Error ? err.message : undefined;
 }
@@ -191,16 +174,15 @@ export class TournamentController {
             throw new Error("NO_FUNDS");
           }
 
-          try {
-            await tx.wallet.update({
-              where: { userId: trimmedUserId },
-              data: { balance: { decrement: tournament.entryFee } },
-            });
-          } catch (err) {
-            if (isInsufficientFundsDbError(err)) {
-              throw new Error("NO_FUNDS");
-            }
-            throw err;
+          const debit = await tx.wallet.updateMany({
+            where: {
+              userId: trimmedUserId,
+              balance: { gte: tournament.entryFee },
+            },
+            data: { balance: { decrement: tournament.entryFee } },
+          });
+          if (debit.count !== 1) {
+            throw new Error("NO_FUNDS");
           }
 
           const referenceId = `escrow_${trimmedTournamentId}_${trimmedUserId}_${crypto.randomUUID()}`;

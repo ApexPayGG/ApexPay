@@ -56,7 +56,7 @@ function createHarness() {
 type MockReq = {
   params: { id?: string };
   body: { claimedWinnerId?: string; finalWinnerId?: string };
-  user?: { id: string };
+  user?: { id: string; role?: string };
 };
 
 function mockRes() {
@@ -377,13 +377,28 @@ describe("MatchController.resolveDispute", () => {
       {
         params: { id: "m1" },
         body: { finalWinnerId: "w1" },
-        user: { id: "arb" },
+        user: { id: "arb", role: "ADMIN" },
       } as MockReq as never,
       res as never,
     );
 
     expect(res.status).toHaveBeenCalledWith(404);
     errSpy.mockRestore();
+  });
+
+  it("returns 403 when caller is not an admin arbitrator", async () => {
+    const res = mockRes();
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "w1" },
+        user: { id: "player_1", role: "PLAYER" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(h.prismaTransaction).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it("returns 409 when match already resolved", async () => {
@@ -399,11 +414,37 @@ describe("MatchController.resolveDispute", () => {
       {
         params: { id: "m1" },
         body: { finalWinnerId: "w1" },
-        user: { id: "arb" },
+        user: { id: "arb", role: "ADMIN" },
       } as MockReq as never,
       res as never,
     );
 
+    expect(res.status).toHaveBeenCalledWith(409);
+    errSpy.mockRestore();
+  });
+
+  it("returns 409 and does not pay when match is settled by another settlement path", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "SETTLED",
+      winnerId: "old",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "w1" },
+        user: { id: "arb", role: "ADMIN" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    expect(h.advanceAfterTerminalMatch).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(409);
     errSpy.mockRestore();
   });
@@ -423,7 +464,7 @@ describe("MatchController.resolveDispute", () => {
       {
         params: { id: "m1" },
         body: { finalWinnerId: "outsider" },
-        user: { id: "arb" },
+        user: { id: "arb", role: "ADMIN" },
       } as MockReq as never,
       res as never,
     );
@@ -446,7 +487,7 @@ describe("MatchController.resolveDispute", () => {
       {
         params: { id: "m1" },
         body: { finalWinnerId: "winner-1" },
-        user: { id: "arb" },
+        user: { id: "arb", role: "ADMIN" },
       } as MockReq as never,
       res as never,
     );
@@ -487,7 +528,7 @@ describe("MatchController.resolveDispute", () => {
       {
         params: { id: "m1" },
         body: { finalWinnerId: "winner-1" },
-        user: { id: "arb" },
+        user: { id: "arb", role: "ADMIN" },
       } as MockReq as never,
       res as never,
     );
