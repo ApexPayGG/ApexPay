@@ -630,9 +630,14 @@ export function createApp(options: CreateAppOptions): {
     void matchController.reportResult(req as never, res as never);
   });
 
-  app.post("/api/matches/:id/resolve", authMiddleware, (req, res) => {
-    void matchController.resolveDispute(req as never, res as never);
-  });
+  app.post(
+    "/api/matches/:id/resolve",
+    authMiddleware,
+    requireRole([UserRole.ADMIN]),
+    (req, res) => {
+      void matchController.resolveDispute(req as never, res as never);
+    },
+  );
 
   app.post(
     "/api/v1/matches/:id/resolve",
