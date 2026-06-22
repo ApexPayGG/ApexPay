@@ -165,7 +165,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("201 dla poprawnego splitu i wpisy w ledgerze", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
-    const { prisma, createdTransactions } = buildContext();
+    const { prisma, tx, createdTransactions } = buildContext();
     const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
 
     const res = await request(app)
