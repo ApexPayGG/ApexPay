@@ -1,10 +1,16 @@
 import type { Request, Response } from "express";
-import type { PrismaClient } from "@prisma/client";
+import {
+  ConnectedAccountStatus,
+  SafeTaxiRideStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
   RideFinalizeConfigError,
+  RideFinalizeInsufficientFundsError,
+  RideFinalizeInvalidStateError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
@@ -29,6 +35,10 @@ const rideFinalizeBodySchema = z
     driver_connected_account_id: z.string().trim().min(1),
   })
   .strict();
+
+const RIDE_FINALIZE_IDEMP_TTL_SEC = 86_400;
+const IDEMP_PROCESSING = "processing";
+const IDEMP_DONE = "done";
 
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
@@ -98,6 +108,7 @@ export class PaymentsController {
       return;
     }
 
+    let acquiredIdempotencyKey: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -110,14 +121,37 @@ export class PaymentsController {
       }
 
       const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      const idemSet = await this.redis.set(
+        idempotencyKey,
+        IDEMP_PROCESSING,
+        "EX",
+        RIDE_FINALIZE_IDEMP_TTL_SEC,
+        "NX",
+      );
       if (idemSet === null) {
-        res.status(200).json({
-          rideId: body.ride_id,
-          duplicate: true,
+        const durableSettled = await this.rideFinalizeDurablySettled(
+          body.ride_id,
+          body.driver_connected_account_id,
+          userId,
+        );
+        const state = await this.redis.get(idempotencyKey);
+        if (state === IDEMP_DONE && durableSettled) {
+          res.status(200).json({
+            rideId: body.ride_id,
+            duplicate: true,
+          });
+          return;
+        }
+        if (!durableSettled && state !== IDEMP_PROCESSING) {
+          await this.redis.del(idempotencyKey);
+        }
+        res.status(409).json({
+          error: "Rozliczenie przejazdu jest w toku. Spróbuj ponownie.",
+          code: "CONFLICT",
         });
         return;
       }
+      acquiredIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -132,6 +166,16 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      try {
+        await this.redis.set(
+          idempotencyKey,
+          IDEMP_DONE,
+          "EX",
+          RIDE_FINALIZE_IDEMP_TTL_SEC,
+        );
+      } catch (redisErr) {
+        console.warn("[payments/ride-finalize] idempotency done write failed", redisErr);
+      }
 
       res.status(201).json({
         rideId: result.rideId,
@@ -141,6 +185,13 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (acquiredIdempotencyKey !== undefined) {
+        try {
+          await this.redis.del(acquiredIdempotencyKey);
+        } catch (redisErr) {
+          console.warn("[payments/ride-finalize] idempotency cleanup failed", redisErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
@@ -153,8 +204,49 @@ export class PaymentsController {
         res.status(503).json({ error: err.message, code: "SERVICE_UNAVAILABLE" });
         return;
       }
+      if (err instanceof RideFinalizeInvalidStateError) {
+        res.status(409).json({ error: err.message, code: "CONFLICT" });
+        return;
+      }
+      if (err instanceof RideFinalizeInsufficientFundsError) {
+        res.status(402).json({ error: err.message, code: "PAYMENT_REQUIRED" });
+        return;
+      }
       console.error("[payments/ride-finalize]", err);
       res.status(500).json({ error: "Internal server error" });
     }
+  }
+
+  private async rideFinalizeDurablySettled(
+    rideId: string,
+    driverConnectedAccountId: string,
+    integratorUserId: string,
+  ): Promise<boolean> {
+    const [ride, debit, connectedAccount] = await Promise.all([
+      this.prisma.safeTaxiRide.findUnique({
+        where: { id: rideId },
+        select: { status: true, driverId: true },
+      }),
+      this.prisma.transaction.findUnique({
+        where: { referenceId: `ride:${rideId}:debit` },
+        select: { id: true },
+      }),
+      this.prisma.connectedAccount.findUnique({
+        where: { id: driverConnectedAccountId },
+        select: {
+          userId: true,
+          integratorUserId: true,
+          status: true,
+        },
+      }),
+    ]);
+    return (
+      ride?.status === SafeTaxiRideStatus.SETTLED &&
+      debit !== null &&
+      connectedAccount !== null &&
+      connectedAccount.status === ConnectedAccountStatus.ACTIVE &&
+      connectedAccount.integratorUserId === integratorUserId &&
+      connectedAccount.userId === ride.driverId
+    );
   }
 }
