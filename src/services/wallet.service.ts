@@ -299,6 +299,18 @@ export class WalletService {
     );
   }
 
+  async hasPspDeposit(pspRefId: string): Promise<boolean> {
+    const trimmedRef = pspRefId.trim();
+    if (trimmedRef.length === 0) {
+      return false;
+    }
+    const row = await this.prisma.transaction.findFirst({
+      where: { referenceId: `dep:${trimmedRef}` },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
   async processEntryFee(
     userId: string,
     amount: bigint,

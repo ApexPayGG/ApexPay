@@ -17,6 +17,8 @@ function createTxMock(overrides: {
     status: string;
     winnerId: string | null;
     tournamentId: string;
+    playerAId: string | null;
+    playerBId: string | null;
   };
 } = {}) {
   const matchRow = overrides.matchRow ?? {
@@ -24,6 +26,8 @@ function createTxMock(overrides: {
     status: "DISPUTED",
     winnerId: null,
     tournamentId: "t1",
+    playerAId: "w1",
+    playerBId: "p2",
   };
   const queryRaw = vi.fn().mockResolvedValue([matchRow]);
   const matchFindUnique = vi.fn();
@@ -83,6 +87,8 @@ describe("MatchSettlementService", () => {
         status: "SETTLED",
         winnerId: "w1",
         tournamentId: "t1",
+        playerAId: "w1",
+        playerBId: "p2",
       },
     });
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -105,6 +111,8 @@ describe("MatchSettlementService", () => {
         status: "PENDING",
         winnerId: null,
         tournamentId: "t1",
+        playerAId: "w1",
+        playerBId: "p2",
       },
     });
     (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
@@ -119,6 +127,33 @@ describe("MatchSettlementService", () => {
       }),
     ).rejects.toMatchObject({ code: "MATCH_NOT_DISPUTED" });
   });
+
+  it("throws WINNER_NOT_IN_MATCH before paying a non-participant", async () => {
+    txMocks = createTxMock({
+      matchRow: {
+        id: "m1",
+        status: "DISPUTED",
+        winnerId: null,
+        tournamentId: "t1",
+        playerAId: "player-a",
+        playerBId: "player-b",
+      },
+    });
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "attacker",
+      }),
+    ).rejects.toMatchObject({ code: "WINNER_NOT_IN_MATCH" });
+    expect(txMocks.walletUpdate).not.toHaveBeenCalled();
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+  });
+
 
   it("locks match, updates wallets, ledger, outbox, and sets SETTLED", async () => {
     txMocks = createTxMock();

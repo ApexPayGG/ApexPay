@@ -30,8 +30,10 @@ const checks: Check[] = [
   { name: "REDIS_URL", optional: true },
   { name: "RABBITMQ_URL", optional: true },
   { name: "PSP_DEPOSIT_WEBHOOK_SECRET", optional: true, prodRecommended: true },
+  { name: "API_SECRET_KEYS", optional: true, prodRecommended: true },
   { name: "API_DOMAIN", optional: true, prodRecommended: true },
   { name: "APP_DOMAIN", optional: true, prodRecommended: true },
+  { name: "SKILLGAMING_APP_DOMAIN", optional: true, prodRecommended: true },
   { name: "APEXPAY_WEB_IMAGE", optional: true, prodRecommended: true },
   { name: "CORS_ORIGIN", optional: true, prodRecommended: true },
 ];
@@ -137,6 +139,13 @@ if (treatAsProd && !isSet("PSP_DEPOSIT_WEBHOOK_SECRET")) {
   console.log(
     "[ops:check-env] Uwaga (prod): PSP_DEPOSIT_WEBHOOK_SECRET — webhook wpłat będzie zwracał 503.",
   );
+}
+
+for (const requiredInProd of ["API_SECRET_KEYS", "SKILLGAMING_APP_DOMAIN"]) {
+  if (treatAsProd && !isSet(requiredInProd)) {
+    console.error(`[ops:check-env] BRAK (wymagane w prod): ${requiredInProd}`);
+    failed = true;
+  }
 }
 
 if (failed) {
