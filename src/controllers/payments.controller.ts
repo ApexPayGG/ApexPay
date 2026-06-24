@@ -5,6 +5,7 @@ import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
 import {
   RideFinalizeConfigError,
+  RideFinalizeInsufficientFundsError,
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
@@ -98,6 +99,7 @@ export class PaymentsController {
       return;
     }
 
+    let acquiredIdempotencyKey: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -118,6 +120,7 @@ export class PaymentsController {
         });
         return;
       }
+      acquiredIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -141,12 +144,23 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
+      if (acquiredIdempotencyKey !== undefined) {
+        try {
+          await this.redis.del(acquiredIdempotencyKey);
+        } catch (redisErr) {
+          console.error("[payments/ride-finalize] failed to release idempotency key", redisErr);
+        }
+      }
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
+        return;
+      }
+      if (err instanceof RideFinalizeInsufficientFundsError) {
+        res.status(409).json({ error: err.message, code: "INSUFFICIENT_FUNDS" });
         return;
       }
       if (err instanceof RideFinalizeConfigError) {
