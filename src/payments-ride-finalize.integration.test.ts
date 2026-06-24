@@ -21,8 +21,13 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     keyHash = await bcrypt.hash(fullApiKey, 4);
   });
 
-  function buildContext(opts?: { passengerBalance?: bigint }) {
+  function buildContext(opts?: {
+    passengerBalance?: bigint;
+    connectedAccountIntegratorUserId?: string;
+  }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
+    const connectedAccountIntegratorUserId =
+      opts?.connectedAccountIntegratorUserId ?? integratorUserId;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
     const tx = {
       safeTaxiRide: {
@@ -32,7 +37,8 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         findUnique: vi.fn().mockResolvedValue({
           id: "ca_1",
           userId: "driver_user_1",
-          integratorUserId,
+          integratorUserId: connectedAccountIntegratorUserId,
+          status: "ACTIVE",
         }),
       },
       wallet: {
@@ -48,6 +54,17 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           }
           return Promise.resolve(null);
         }),
+        updateMany: vi.fn().mockImplementation(
+          (args: { where: { id: string; balance?: { gte?: bigint } } }) => {
+            if (
+              args.where.id === "w_passenger" &&
+              passengerBalance >= (args.where.balance?.gte ?? 0n)
+            ) {
+              return Promise.resolve({ count: 1 });
+            }
+            return Promise.resolve({ count: 0 });
+          },
+        ),
         update: vi.fn().mockResolvedValue({}),
       },
       transaction: {
@@ -95,6 +112,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
 
@@ -161,6 +179,13 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         "ride:ride_1:tip",
       ]),
     );
+    expect(createdTransactions).toContainEqual(
+      expect.objectContaining({
+        referenceId: "ride:ride_1:debit",
+        amount: -1050n,
+        type: "SAFE_TAXI_PASSENGER_CHARGE",
+      }),
+    );
     vi.unstubAllEnvs();
   });
 
@@ -175,34 +200,39 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
   });
 
-  it("201 gdy pay-in był wcześniej (saldo pasażera = 0) — skip debetu pasażera, credity wykonane", async () => {
+  it("rejects without credits when passenger wallet cannot cover base plus tip", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
     const { prisma, createdTransactions } = buildContext({ passengerBalance: 0n });
-    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+    const redis = makeRedis("OK");
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
 
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
 
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      rideId: "ride_1",
-      driverPayout: 850,
-      platformCommission: 200,
-      tip: 50,
-      duplicate: false,
-    });
+    expect(res.status).toBe(409);
+    expect(createdTransactions).toEqual([]);
+    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
+    vi.unstubAllEnvs();
+  });
 
-    const refs = createdTransactions.map((t) => t.referenceId);
-    expect(refs).not.toContain("ride:ride_1:debit");
-    expect(refs).toEqual(
-      expect.arrayContaining([
-        "ride:ride_1:driver",
-        "ride:ride_1:platform",
-        "ride:ride_1:tip",
-      ]),
-    );
+  it("rejects when driver connected account belongs to another integrator", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, createdTransactions } = buildContext({
+      connectedAccountIntegratorUserId: "other_integrator",
+    });
+    const redis = makeRedis("OK");
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(404);
+    expect(createdTransactions).toEqual([]);
+    expect(redis.del).toHaveBeenCalledWith("idemp:ride-finalize:ride_1");
     vi.unstubAllEnvs();
   });
 });
