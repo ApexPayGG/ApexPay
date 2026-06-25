@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { PaymentMethodProvider } from "@prisma/client";
 import type { Redis } from "ioredis";
 import { contextLogger } from "../lib/logger.js";
-import { AutopayService } from "../services/autopay.service.js";
+import { AutopayService, type AutopayItnData } from "../services/autopay.service.js";
 import { PaymentMethodDuplicateError, type PaymentMethodService } from "../services/payment-method.service.js";
 import { WalletNotFoundError, type WalletService } from "../services/wallet.service.js";
 
@@ -44,6 +44,7 @@ export class AutopayItnWebhookController {
   ) {}
 
   async handle(req: Request, res: Response): Promise<void> {
+    let acquiredIdempKey: string | undefined;
     try {
       const rawTransactions = req.body?.transactions;
       if (typeof rawTransactions !== "string" || rawTransactions.trim().length === 0) {
@@ -61,32 +62,16 @@ export class AutopayItnWebhookController {
       const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
       const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
       if (setOk !== "OK") {
+        if (itn.PaymentStatus === "SUCCESS") {
+          await this.applySuccessfulItn(itn);
+        }
         res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
         return;
       }
+      acquiredIdempKey = idempKey;
 
       if (itn.PaymentStatus === "SUCCESS") {
-        const userId = userIdFromOrderId(itn.OrderID);
-        const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
-        if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
-          throw new RangeError("Invalid Amount");
-        }
-
-        await this.walletService.depositFundsPspWebhook(userId, BigInt(amountMinor), itn.RemoteID);
-
-        if (itn.CustomerHash !== undefined && itn.CustomerHash.length > 0) {
-          try {
-            await this.paymentMethodService.createForUser(userId, {
-              provider: PaymentMethodProvider.AUTOPAY,
-              token: itn.CustomerHash,
-              type: "AUTOPAY_RECURRING",
-            });
-          } catch (err) {
-            if (!(err instanceof PaymentMethodDuplicateError)) {
-              throw err;
-            }
-          }
-        }
+        await this.applySuccessfulItn(itn);
       } else if (itn.PaymentStatus === "PENDING") {
         contextLogger().info({ orderId: itn.OrderID, remoteId: itn.RemoteID }, "Autopay ITN pending");
       } else if (itn.PaymentStatus === "FAILURE") {
@@ -100,6 +85,19 @@ export class AutopayItnWebhookController {
 
       res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
     } catch (err) {
+      if (acquiredIdempKey !== undefined) {
+        try {
+          await this.redis.del(acquiredIdempKey);
+        } catch (cleanupErr) {
+          contextLogger().warn(
+            {
+              err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+              idempKey: acquiredIdempKey,
+            },
+            "Autopay ITN idempotency cleanup failed",
+          );
+        }
+      }
       if (err instanceof WalletNotFoundError || err instanceof RangeError) {
         contextLogger().warn(
           { err: err.message },
@@ -113,6 +111,30 @@ export class AutopayItnWebhookController {
         "Autopay ITN processing error",
       );
       res.status(200).type("application/xml").send(errorXml("INTERNAL_ERROR"));
+    }
+  }
+
+  private async applySuccessfulItn(itn: AutopayItnData): Promise<void> {
+    const userId = userIdFromOrderId(itn.OrderID);
+    const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
+    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+      throw new RangeError("Invalid Amount");
+    }
+
+    await this.walletService.depositFundsPspWebhook(userId, BigInt(amountMinor), itn.RemoteID);
+
+    if (itn.CustomerHash !== undefined && itn.CustomerHash.length > 0) {
+      try {
+        await this.paymentMethodService.createForUser(userId, {
+          provider: PaymentMethodProvider.AUTOPAY,
+          token: itn.CustomerHash,
+          type: "AUTOPAY_RECURRING",
+        });
+      } catch (err) {
+        if (!(err instanceof PaymentMethodDuplicateError)) {
+          throw err;
+        }
+      }
     }
   }
 }
