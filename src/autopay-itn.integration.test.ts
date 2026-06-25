@@ -43,13 +43,17 @@ function buildItnBase64(params: {
   return Buffer.from(xml, "utf8").toString("base64");
 }
 
+function setAutopayEnv(): void {
+  process.env.AUTOPAY_SHARED_KEY = "testkey123";
+  process.env.AUTOPAY_SERVICE_ID = "123456";
+  process.env.AUTOPAY_GATEWAY_URL = "https://pay-accept.bm.pl";
+  process.env.AUTOPAY_RETURN_URL = "https://app.example.com/payments/return";
+  process.env.AUTOPAY_ITN_URL = "https://api.example.com/internal/webhooks/autopay-itn";
+}
+
 describe("POST /internal/webhooks/autopay-itn", () => {
   it("SUCCESS księguje środki i działa idempotentnie po OrderID+RemoteID", async () => {
-    process.env.AUTOPAY_SHARED_KEY = "testkey123";
-    process.env.AUTOPAY_SERVICE_ID = "123456";
-    process.env.AUTOPAY_GATEWAY_URL = "https://pay-accept.bm.pl";
-    process.env.AUTOPAY_RETURN_URL = "https://app.example.com/payments/return";
-    process.env.AUTOPAY_ITN_URL = "https://api.example.com/internal/webhooks/autopay-itn";
+    setAutopayEnv();
 
     let idempTaken = false;
     const redis = {
@@ -66,7 +70,16 @@ describe("POST /internal/webhooks/autopay-itn", () => {
 
     const tx = {
       transaction: {
-        findFirst: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            id: "txn_1",
+            walletId: "w1",
+            amount: 3550n,
+            referenceId: "dep:REMOTE-1",
+            type: "DEPOSIT",
+            createdAt: new Date(),
+          }),
         create: vi.fn().mockResolvedValue({
           id: "txn_1",
           walletId: "w1",
@@ -130,6 +143,141 @@ describe("POST /internal/webhooks/autopay-itn", () => {
       .send({ transactions: payload });
     expect(res2.status).toBe(200);
     expect(res2.text).toContain("<confirmation>CONFIRMED</confirmation>");
+    expect(tx.transaction.findFirst).toHaveBeenCalledTimes(2);
     expect(tx.transaction.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("po błędzie księgowania zwalnia idempotency key, aby retry zaksięgował wpłatę", async () => {
+    setAutopayEnv();
+
+    let idempTaken = false;
+    const redis = {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockImplementation(async () => {
+        if (idempTaken) {
+          return null;
+        }
+        idempTaken = true;
+        return "OK";
+      }),
+      del: vi.fn().mockImplementation(async () => {
+        idempTaken = false;
+        return 1;
+      }),
+    } as unknown as Redis;
+
+    const tx = {
+      transaction: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn()
+          .mockRejectedValueOnce(new Error("database timeout"))
+          .mockResolvedValueOnce({
+            id: "txn_1",
+            walletId: "w1",
+            amount: 3550n,
+            referenceId: "dep:REMOTE-RETRY-1",
+            type: "DEPOSIT",
+            createdAt: new Date(),
+          }),
+      },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue({ id: "w1" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      paymentMethod: {
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockResolvedValue({
+          id: "pm1",
+          userId: "user_1",
+          provider: "AUTOPAY",
+          token: "cust_h_retry",
+          type: "AUTOPAY_RECURRING",
+          last4: null,
+          expMonth: null,
+          expYear: null,
+          isDefault: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      },
+    };
+
+    const prisma = {
+      $transaction: vi.fn(async (fn: (trx: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+
+    const wsService = { notifyWallet: vi.fn() } as unknown as WebSocketService;
+    const { app } = createApp({ prisma, redis, wsService });
+
+    const orderId = "dep:user_1:1710000000001";
+    const payload = buildItnBase64({
+      serviceId: "123456",
+      orderId,
+      remoteId: "REMOTE-RETRY-1",
+      amount: "35.50",
+      currency: "PLN",
+      status: "SUCCESS",
+      customerHash: "cust_h_retry",
+    });
+
+    const first = await request(app)
+      .post("/internal/webhooks/autopay-itn")
+      .type("form")
+      .send({ transactions: payload });
+    expect(first.status).toBe(200);
+    expect(first.text).toContain("INTERNAL_ERROR");
+    expect(redis.del).toHaveBeenCalledWith("idemp:autopay-itn:dep:user_1:1710000000001:REMOTE-RETRY-1");
+
+    const retry = await request(app)
+      .post("/internal/webhooks/autopay-itn")
+      .type("form")
+      .send({ transactions: payload });
+    expect(retry.status).toBe(200);
+    expect(retry.text).toContain("<confirmation>CONFIRMED</confirmation>");
+    expect(tx.transaction.create).toHaveBeenCalledTimes(2);
+    expect(tx.wallet.update).toHaveBeenCalledTimes(2);
+  });
+
+  it("odsyła błąd XML nawet gdy zwolnienie idempotency key nie powiedzie się", async () => {
+    setAutopayEnv();
+
+    const redis = {
+      ping: vi.fn().mockResolvedValue("PONG"),
+      set: vi.fn().mockResolvedValue("OK"),
+      del: vi.fn().mockRejectedValue(new Error("redis unavailable")),
+    } as unknown as Redis;
+    const tx = {
+      transaction: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockRejectedValue(new Error("database timeout")),
+      },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue({ id: "w1" }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (fn: (trx: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+    const wsService = { notifyWallet: vi.fn() } as unknown as WebSocketService;
+    const { app } = createApp({ prisma, redis, wsService });
+
+    const payload = buildItnBase64({
+      serviceId: "123456",
+      orderId: "dep:user_1:1710000000002",
+      remoteId: "REMOTE-RETRY-DEL-FAIL",
+      amount: "35.50",
+      currency: "PLN",
+      status: "SUCCESS",
+    });
+
+    const res = await request(app)
+      .post("/internal/webhooks/autopay-itn")
+      .type("form")
+      .send({ transactions: payload })
+      .timeout({ response: 1000, deadline: 1500 });
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("INTERNAL_ERROR");
+    expect(redis.del).toHaveBeenCalledWith("idemp:autopay-itn:dep:user_1:1710000000002:REMOTE-RETRY-DEL-FAIL");
   });
 });
