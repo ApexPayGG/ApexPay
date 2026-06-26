@@ -5,6 +5,7 @@ import {
   TransactionType,
   type PrismaClient,
 } from "@prisma/client";
+import { InsufficientFundsError } from "./wallet.service.js";
 import {
   DriverDebtLimitExceededError,
   SafeTaxiConfigError,
@@ -158,6 +159,65 @@ describe("SafeTaxiService.settleRide — CASH (driver debt)", () => {
       DriverDebtLimitExceededError,
     );
     expect(walletUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("SafeTaxiService.settleRide — CARD", () => {
+  beforeEach(() => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "user_platform");
+    vi.stubEnv("SAFE_TAXI_PLATFORM_COMMISSION_BPS", "1500");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("nie kredytuje kierowcy ani platformy gdy pasażer nie ma środków", async () => {
+    const rideRow = {
+      id: "ride_card_1",
+      passengerId: "user_pass",
+      driverId: "user_driver",
+      paymentMethod: RidePaymentMethod.CARD,
+      status: SafeTaxiRideStatus.CREATED,
+      fareCents: null,
+      platformCommissionCents: null,
+      driverPayoutCents: null,
+      settledAt: null,
+      createdAt: new Date(),
+    };
+    const createdTransactions: unknown[] = [];
+    const tx = {
+      safeTaxiRide: {
+        findUnique: vi.fn().mockResolvedValue(rideRow),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      transaction: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation((args: unknown) => {
+          createdTransactions.push(args);
+          return Promise.resolve({});
+        }),
+      },
+      wallet: {
+        findUnique: vi.fn().mockResolvedValue({ id: "w", balance: 0n }),
+        update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+
+    const service = new SafeTaxiService(prisma);
+    await expect(service.settleRide("ride_card_1", 10000n)).rejects.toBeInstanceOf(
+      InsufficientFundsError,
+    );
+    expect(tx.wallet.updateMany).toHaveBeenCalledWith({
+      where: { userId: "user_pass", balance: { gte: 10000n } },
+      data: { balance: { decrement: 10000n } },
+    });
+    expect(createdTransactions).toEqual([]);
+    expect(tx.safeTaxiRide.update).not.toHaveBeenCalled();
   });
 });
 
