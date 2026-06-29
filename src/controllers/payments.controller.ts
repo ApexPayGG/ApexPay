@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
-import type { PrismaClient } from "@prisma/client";
+import {
+  RidePaymentMethod,
+  SafeTaxiRideStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
@@ -30,6 +34,43 @@ const rideFinalizeBodySchema = z
     driver_connected_account_id: z.string().trim().min(1),
   })
   .strict();
+
+type RideFinalizeBody = z.infer<typeof rideFinalizeBodySchema>;
+
+type RideFinalizeIdempotencyState = {
+  status: "processing" | "done";
+  integratorUserId: string;
+  driverConnectedAccountId: string;
+};
+
+function encodeRideFinalizeIdempotencyState(
+  state: RideFinalizeIdempotencyState,
+): string {
+  return JSON.stringify(state);
+}
+
+function parseRideFinalizeIdempotencyState(raw: string | null): RideFinalizeIdempotencyState | null {
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<RideFinalizeIdempotencyState>;
+    if (
+      (parsed.status === "processing" || parsed.status === "done") &&
+      typeof parsed.integratorUserId === "string" &&
+      typeof parsed.driverConnectedAccountId === "string"
+    ) {
+      return {
+        status: parsed.status,
+        integratorUserId: parsed.integratorUserId,
+        driverConnectedAccountId: parsed.driverConnectedAccountId,
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
@@ -112,11 +153,29 @@ export class PaymentsController {
       }
 
       const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      const processingState = encodeRideFinalizeIdempotencyState({
+        status: "processing",
+        integratorUserId: userId,
+        driverConnectedAccountId: body.driver_connected_account_id,
+      });
+      const idemSet = await this.redis.set(idempotencyKey, processingState, "EX", 86400, "NX");
       if (idemSet === null) {
-        res.status(200).json({
-          rideId: body.ride_id,
-          duplicate: true,
+        const state = parseRideFinalizeIdempotencyState(await this.redis.get(idempotencyKey));
+        const confirmed =
+          state?.status === "done" &&
+          state.integratorUserId === userId &&
+          state.driverConnectedAccountId === body.driver_connected_account_id &&
+          (await this.hasDurableRideFinalize(body, userId));
+        if (confirmed) {
+          res.status(200).json({
+            rideId: body.ride_id,
+            duplicate: true,
+          });
+          return;
+        }
+        res.status(409).json({
+          error: "Ride finalize is still processing.",
+          code: "IDEMPOTENCY_IN_PROGRESS",
         });
         return;
       }
@@ -135,6 +194,12 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      const doneState = encodeRideFinalizeIdempotencyState({
+        status: "done",
+        integratorUserId: userId,
+        driverConnectedAccountId: body.driver_connected_account_id,
+      });
+      await this.redis.set(idempotencyKey, doneState, "EX", 86400);
 
       res.status(201).json({
         rideId: result.rideId,
@@ -170,5 +235,42 @@ export class PaymentsController {
       console.error("[payments/ride-finalize]", err);
       res.status(500).json({ error: "Internal server error" });
     }
+  }
+
+  private async hasDurableRideFinalize(
+    body: RideFinalizeBody,
+    integratorUserId: string,
+  ): Promise<boolean> {
+    const [ride, connectedAccount, debit] = await Promise.all([
+      this.prisma.safeTaxiRide.findUnique({
+        where: { id: body.ride_id },
+        select: {
+          driverId: true,
+          paymentMethod: true,
+          status: true,
+        },
+      }),
+      this.prisma.connectedAccount.findUnique({
+        where: { id: body.driver_connected_account_id },
+        select: {
+          userId: true,
+          integratorUserId: true,
+          status: true,
+        },
+      }),
+      this.prisma.transaction.findUnique({
+        where: { referenceId: `ride:${body.ride_id}:debit` },
+        select: { id: true },
+      }),
+    ]);
+
+    return (
+      ride?.status === SafeTaxiRideStatus.SETTLED &&
+      ride.paymentMethod === RidePaymentMethod.CARD &&
+      connectedAccount?.status === "ACTIVE" &&
+      connectedAccount.integratorUserId === integratorUserId &&
+      connectedAccount.userId === ride.driverId &&
+      debit !== null
+    );
   }
 }

@@ -107,16 +107,37 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         }),
         update: vi.fn().mockResolvedValue({}),
       },
+      safeTaxiRide: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "ride_1",
+          passengerId: "passenger_1",
+          driverId: "driver_user_1",
+          paymentMethod: RidePaymentMethod.CARD,
+          status: SafeTaxiRideStatus.SETTLED,
+        }),
+      },
+      connectedAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "ca_1",
+          userId: "driver_user_1",
+          integratorUserId,
+          status: "ACTIVE",
+        }),
+      },
+      transaction: {
+        findUnique: vi.fn().mockResolvedValue({ id: "tx_debit" }),
+      },
       $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     } as unknown as PrismaClient;
 
     return { prisma, tx, createdTransactions };
   }
 
-  function makeRedis(setResult: "OK" | null = "OK"): Redis {
+  function makeRedis(setResult: "OK" | null = "OK", getResult: string | null = null): Redis {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      get: vi.fn().mockResolvedValue(getResult),
       del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
@@ -190,13 +211,41 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("200 duplicate:true dla duplikatu ride_id", async () => {
     const { prisma } = buildContext();
-    const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
+    const doneState = JSON.stringify({
+      status: "done",
+      integratorUserId,
+      driverConnectedAccountId: "ca_1",
+    });
+    const { app } = createApp({ prisma, redis: makeRedis(null, doneState), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+  });
+
+  it("409 dla duplikatu gdy poprzednie przetwarzanie nie ma trwałego done", async () => {
+    const { prisma, createdTransactions } = buildContext();
+    const processingState = JSON.stringify({
+      status: "processing",
+      integratorUserId,
+      driverConnectedAccountId: "ca_1",
+    });
+    const { app } = createApp({
+      prisma,
+      redis: makeRedis(null, processingState),
+      wsService: makeWs(),
+    });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "IDEMPOTENCY_IN_PROGRESS" });
+    expect(createdTransactions).toEqual([]);
   });
 
   it("402 gdy saldo pasażera nie pokrywa base+tip i nie tworzy creditów", async () => {
