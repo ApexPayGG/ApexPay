@@ -8,6 +8,7 @@ import {
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -98,6 +99,7 @@ export class PaymentsController {
       return;
     }
 
+    let acquiredIdempotencyKey: string | undefined;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -118,6 +120,7 @@ export class PaymentsController {
         });
         return;
       }
+      acquiredIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -143,6 +146,17 @@ export class PaymentsController {
     } catch (err) {
       if (err instanceof ZodError) {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
+        return;
+      }
+      if (acquiredIdempotencyKey !== undefined) {
+        try {
+          await this.redis.del(acquiredIdempotencyKey);
+        } catch (redisErr) {
+          console.error("[payments/ride-finalize] failed to release idempotency key", redisErr);
+        }
+      }
+      if (err instanceof InsufficientFundsError) {
+        res.status(402).json({ error: "Insufficient funds", code: "INSUFFICIENT_FUNDS" });
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {
