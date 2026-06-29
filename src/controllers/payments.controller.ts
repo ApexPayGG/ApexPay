@@ -141,6 +141,7 @@ export class PaymentsController {
     }
 
     let acquiredIdempotencyKey: string | undefined;
+    let settlementCommitted = false;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -194,12 +195,17 @@ export class PaymentsController {
           : {}),
       };
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      settlementCommitted = true;
       const doneState = encodeRideFinalizeIdempotencyState({
         status: "done",
         integratorUserId: userId,
         driverConnectedAccountId: body.driver_connected_account_id,
       });
-      await this.redis.set(idempotencyKey, doneState, "EX", 86400);
+      try {
+        await this.redis.set(idempotencyKey, doneState, "EX", 86400);
+      } catch (redisErr) {
+        console.error("[payments/ride-finalize] failed to mark idempotency done", redisErr);
+      }
 
       res.status(201).json({
         rideId: result.rideId,
@@ -213,7 +219,7 @@ export class PaymentsController {
         res.status(400).json({ error: "Nieprawidłowe dane.", code: "BAD_REQUEST" });
         return;
       }
-      if (acquiredIdempotencyKey !== undefined) {
+      if (acquiredIdempotencyKey !== undefined && !settlementCommitted) {
         try {
           await this.redis.del(acquiredIdempotencyKey);
         } catch (redisErr) {

@@ -209,6 +209,28 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     vi.unstubAllEnvs();
   });
 
+  it("201 gdy settlement DB się powiódł, ale zapis Redis done zawiódł", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, createdTransactions } = buildContext();
+    const redis = makeRedis("OK");
+    const set = redis.set as unknown as ReturnType<typeof vi.fn>;
+    set.mockResolvedValueOnce("OK").mockRejectedValueOnce(new Error("redis down after commit"));
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ duplicate: false, rideId: "ride_1" });
+    expect(createdTransactions.map((t) => t.referenceId)).toContain("ride:ride_1:debit");
+    expect(redis.del).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
   it("200 duplicate:true dla duplikatu ride_id", async () => {
     const { prisma } = buildContext();
     const doneState = JSON.stringify({
