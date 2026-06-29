@@ -49,29 +49,6 @@ function encodeRideFinalizeIdempotencyState(
   return JSON.stringify(state);
 }
 
-function parseRideFinalizeIdempotencyState(raw: string | null): RideFinalizeIdempotencyState | null {
-  if (raw === null) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as Partial<RideFinalizeIdempotencyState>;
-    if (
-      (parsed.status === "processing" || parsed.status === "done") &&
-      typeof parsed.integratorUserId === "string" &&
-      typeof parsed.driverConnectedAccountId === "string"
-    ) {
-      return {
-        status: parsed.status,
-        integratorUserId: parsed.integratorUserId,
-        driverConnectedAccountId: parsed.driverConnectedAccountId,
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
 }
@@ -161,13 +138,17 @@ export class PaymentsController {
       });
       const idemSet = await this.redis.set(idempotencyKey, processingState, "EX", 86400, "NX");
       if (idemSet === null) {
-        const state = parseRideFinalizeIdempotencyState(await this.redis.get(idempotencyKey));
-        const confirmed =
-          state?.status === "done" &&
-          state.integratorUserId === userId &&
-          state.driverConnectedAccountId === body.driver_connected_account_id &&
-          (await this.hasDurableRideFinalize(body, userId));
-        if (confirmed) {
+        if (await this.hasDurableRideFinalize(body, userId)) {
+          const doneState = encodeRideFinalizeIdempotencyState({
+            status: "done",
+            integratorUserId: userId,
+            driverConnectedAccountId: body.driver_connected_account_id,
+          });
+          try {
+            await this.redis.set(idempotencyKey, doneState, "EX", 86400);
+          } catch (redisErr) {
+            console.error("[payments/ride-finalize] failed to repair idempotency done", redisErr);
+          }
           res.status(200).json({
             rideId: body.ride_id,
             duplicate: true,

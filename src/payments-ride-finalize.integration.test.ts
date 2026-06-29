@@ -25,6 +25,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     passengerBalance?: bigint;
     connectedAccountIntegratorUserId?: string;
     rideStatus?: SafeTaxiRideStatus;
+    durableDuplicate?: boolean;
   }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
@@ -113,7 +114,10 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           passengerId: "passenger_1",
           driverId: "driver_user_1",
           paymentMethod: RidePaymentMethod.CARD,
-          status: SafeTaxiRideStatus.SETTLED,
+          status:
+            opts?.durableDuplicate === false
+              ? SafeTaxiRideStatus.CREATED
+              : SafeTaxiRideStatus.SETTLED,
         }),
       },
       connectedAccount: {
@@ -125,7 +129,9 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         }),
       },
       transaction: {
-        findUnique: vi.fn().mockResolvedValue({ id: "tx_debit" }),
+        findUnique: vi.fn().mockResolvedValue(
+          opts?.durableDuplicate === false ? null : { id: "tx_debit" },
+        ),
       },
       $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     } as unknown as PrismaClient;
@@ -247,8 +253,38 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
   });
 
-  it("409 dla duplikatu gdy poprzednie przetwarzanie nie ma trwałego done", async () => {
+  it("200 duplicate:true dla stale processing, gdy DB potwierdza trwały settlement", async () => {
     const { prisma, createdTransactions } = buildContext();
+    const processingState = JSON.stringify({
+      status: "processing",
+      integratorUserId,
+      driverConnectedAccountId: "ca_1",
+    });
+    const redis = makeRedis(null, processingState);
+    const { app } = createApp({
+      prisma,
+      redis,
+      wsService: makeWs(),
+    });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+    expect(createdTransactions).toEqual([]);
+    expect(redis.set).toHaveBeenLastCalledWith(
+      "idemp:ride-finalize:ride_1",
+      expect.stringContaining('"status":"done"'),
+      "EX",
+      86400,
+    );
+  });
+
+  it("409 dla duplikatu gdy poprzednie przetwarzanie nie ma trwałego settlement", async () => {
+    const { prisma, createdTransactions } = buildContext({ durableDuplicate: false });
     const processingState = JSON.stringify({
       status: "processing",
       integratorUserId,
