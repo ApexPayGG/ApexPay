@@ -11,6 +11,18 @@ class FakeRedis {
     return Promise.resolve("PONG");
   }
 
+  incr(): Promise<number> {
+    return Promise.resolve(1);
+  }
+
+  expire(): Promise<number> {
+    return Promise.resolve(1);
+  }
+
+  del(): Promise<number> {
+    return Promise.resolve(1);
+  }
+
   eval(
     _script: string,
     numKeys: number,
