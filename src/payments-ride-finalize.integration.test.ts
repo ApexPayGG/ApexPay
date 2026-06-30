@@ -138,6 +138,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       del: vi.fn().mockResolvedValue(1),
       incr: vi.fn().mockResolvedValue(1),
       expire: vi.fn().mockResolvedValue(1),
+      pexpire: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
 

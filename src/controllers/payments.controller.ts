@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
-import type { PrismaClient } from "@prisma/client";
+import {
+  ConnectedAccountStatus,
+  SafeTaxiRideStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
@@ -31,6 +35,8 @@ const rideFinalizeBodySchema = z
   })
   .strict();
 
+type RideFinalizeBody = z.infer<typeof rideFinalizeBodySchema>;
+
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
 }
@@ -42,6 +48,40 @@ export class PaymentsController {
     private readonly rideFinalizeService: RideFinalizeService,
     private readonly redis: Redis,
   ) {}
+
+  private async isRideFinalizeDurablyComplete(
+    body: RideFinalizeBody,
+    integratorUserId: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const ride = await tx.safeTaxiRide.findUnique({
+        where: { id: body.ride_id },
+        select: { id: true, driverId: true, status: true },
+      });
+      if (ride === null || ride.status !== SafeTaxiRideStatus.SETTLED) {
+        return false;
+      }
+
+      const connectedAccount = await tx.connectedAccount.findUnique({
+        where: { id: body.driver_connected_account_id },
+        select: { userId: true, integratorUserId: true, status: true },
+      });
+      if (
+        connectedAccount === null ||
+        connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+        connectedAccount.integratorUserId !== integratorUserId ||
+        connectedAccount.userId !== ride.driverId
+      ) {
+        return false;
+      }
+
+      const passengerDebit = await tx.transaction.findUnique({
+        where: { referenceId: `ride:${body.ride_id}:debit` },
+        select: { id: true },
+      });
+      return passengerDebit !== null;
+    });
+  }
 
   async initiate(req: Request, res: Response): Promise<void> {
     const userId = req.user?.id?.trim();
@@ -113,11 +153,21 @@ export class PaymentsController {
       }
 
       idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
-      if (idemSet === null) {
+      const alreadyComplete = await this.isRideFinalizeDurablyComplete(body, userId);
+      if (alreadyComplete) {
         res.status(200).json({
           rideId: body.ride_id,
           duplicate: true,
+        });
+        return;
+      }
+
+      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      if (idemSet === null) {
+        await this.redis.del(idempotencyKey);
+        res.status(409).json({
+          error: "Ride finalization is still processing or missing durable confirmation.",
+          code: "PROCESSING_OR_INCOMPLETE",
         });
         return;
       }
