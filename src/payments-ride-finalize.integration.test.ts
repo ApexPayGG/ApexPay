@@ -28,6 +28,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     rideDriverId?: string;
     rideStatus?: string;
     ridePaymentMethod?: string;
+    hasRideDebit?: boolean;
   }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
     const connectedIntegratorUserId = opts?.connectedIntegratorUserId ?? integratorUserId;
@@ -35,6 +36,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     const rideDriverId = opts?.rideDriverId ?? "driver_user_1";
     const rideStatus = opts?.rideStatus ?? "CREATED";
     const ridePaymentMethod = opts?.ridePaymentMethod ?? "CARD";
+    const hasRideDebit = opts?.hasRideDebit ?? false;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
     const tx = {
       safeTaxiRide: {
@@ -83,6 +85,12 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         update: vi.fn().mockResolvedValue({}),
       },
       transaction: {
+        findUnique: vi.fn().mockImplementation((args: { where: { referenceId: string } }) => {
+          if (hasRideDebit && args.where.referenceId === "ride:ride_1:debit") {
+            return Promise.resolve({ id: "txn_debit", referenceId: args.where.referenceId });
+          }
+          return Promise.resolve(null);
+        }),
         create: vi.fn().mockImplementation((args: { data: { referenceId: string; amount: bigint; type: string } }) => {
           createdTransactions.push({
             referenceId: args.data.referenceId,
@@ -207,8 +215,19 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("200 duplicate:true dla duplikatu ride_id", async () => {
+  it("409 dla duplikatu Redis bez trwałego rozliczenia w DB", async () => {
     const { prisma } = buildContext();
+    const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PROCESSING_OR_INCOMPLETE" });
+  });
+
+  it("200 duplicate:true tylko gdy DB potwierdza rozliczony przejazd", async () => {
+    const { prisma } = buildContext({ rideStatus: "SETTLED", hasRideDebit: true });
     const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
