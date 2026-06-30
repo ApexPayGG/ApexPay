@@ -218,13 +218,15 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("409 dla duplikatu Redis bez trwałego rozliczenia w DB", async () => {
     const { prisma } = buildContext();
-    const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
+    const redis = makeRedis(null);
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: "PROCESSING_OR_INCOMPLETE" });
+    expect(redis.del).not.toHaveBeenCalled();
   });
 
   it("200 duplicate:true tylko gdy DB potwierdza rozliczony przejazd", async () => {
