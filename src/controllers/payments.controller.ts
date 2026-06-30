@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
-import type { PrismaClient } from "@prisma/client";
+import {
+  ConnectedAccountStatus,
+  SafeTaxiRideStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
@@ -8,6 +12,7 @@ import {
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -30,6 +35,8 @@ const rideFinalizeBodySchema = z
   })
   .strict();
 
+type RideFinalizeBody = z.infer<typeof rideFinalizeBodySchema>;
+
 function isAutopayConfigError(err: unknown): boolean {
   return err instanceof Error && /AUTOPAY_[A-Z_]+\s+is required/.test(err.message);
 }
@@ -41,6 +48,40 @@ export class PaymentsController {
     private readonly rideFinalizeService: RideFinalizeService,
     private readonly redis: Redis,
   ) {}
+
+  private async isRideFinalizeDurablyComplete(
+    body: RideFinalizeBody,
+    integratorUserId: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const ride = await tx.safeTaxiRide.findUnique({
+        where: { id: body.ride_id },
+        select: { id: true, driverId: true, status: true },
+      });
+      if (ride === null || ride.status !== SafeTaxiRideStatus.SETTLED) {
+        return false;
+      }
+
+      const connectedAccount = await tx.connectedAccount.findUnique({
+        where: { id: body.driver_connected_account_id },
+        select: { userId: true, integratorUserId: true, status: true },
+      });
+      if (
+        connectedAccount === null ||
+        connectedAccount.status !== ConnectedAccountStatus.ACTIVE ||
+        connectedAccount.integratorUserId !== integratorUserId ||
+        connectedAccount.userId !== ride.driverId
+      ) {
+        return false;
+      }
+
+      const passengerDebit = await tx.transaction.findUnique({
+        where: { referenceId: `ride:${body.ride_id}:debit` },
+        select: { id: true },
+      });
+      return passengerDebit !== null;
+    });
+  }
 
   async initiate(req: Request, res: Response): Promise<void> {
     const userId = req.user?.id?.trim();
@@ -98,6 +139,8 @@ export class PaymentsController {
       return;
     }
 
+    let idempotencyKey: string | undefined;
+    let idempotencyReserved = false;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -109,9 +152,9 @@ export class PaymentsController {
         return;
       }
 
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
-      if (idemSet === null) {
+      idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      const alreadyComplete = await this.isRideFinalizeDurablyComplete(body, userId);
+      if (alreadyComplete) {
         res.status(200).json({
           rideId: body.ride_id,
           duplicate: true,
@@ -119,8 +162,19 @@ export class PaymentsController {
         return;
       }
 
+      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
+      if (idemSet === null) {
+        res.status(409).json({
+          error: "Ride finalization is still processing or missing durable confirmation.",
+          code: "PROCESSING_OR_INCOMPLETE",
+        });
+        return;
+      }
+      idempotencyReserved = true;
+
       const finalizeInput = {
         rideId: body.ride_id,
+        integratorUserId: userId,
         baseAmountGrosze: body.base_amount_grosze,
         platformCommissionGrosze: body.platform_commission_grosze,
         driverBasePayoutGrosze: body.driver_base_payout_grosze,
@@ -146,12 +200,28 @@ export class PaymentsController {
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {
+        if (idempotencyReserved && idempotencyKey !== undefined) {
+          await this.redis.del(idempotencyKey);
+        }
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
         return;
       }
+      if (err instanceof InsufficientFundsError) {
+        if (idempotencyReserved && idempotencyKey !== undefined) {
+          await this.redis.del(idempotencyKey);
+        }
+        res.status(409).json({ error: "Insufficient funds", code: "INSUFFICIENT_FUNDS" });
+        return;
+      }
       if (err instanceof RideFinalizeConfigError) {
+        if (idempotencyReserved && idempotencyKey !== undefined) {
+          await this.redis.del(idempotencyKey);
+        }
         res.status(503).json({ error: err.message, code: "SERVICE_UNAVAILABLE" });
         return;
+      }
+      if (idempotencyReserved && idempotencyKey !== undefined) {
+        await this.redis.del(idempotencyKey);
       }
       console.error("[payments/ride-finalize]", err);
       res.status(500).json({ error: "Internal server error" });

@@ -51,11 +51,21 @@ describe("PspDepositWebhookService", () => {
     expect(depositFundsPspWebhook).not.toHaveBeenCalled();
   });
 
-  it("applyDeposit returns redis_duplicate when SET NX does not acquire lock", async () => {
+  it("applyDeposit still asks the wallet ledger on Redis duplicate", async () => {
     redisSet.mockResolvedValue(null);
+    const txn = {
+      id: "t_old",
+      walletId: "w1",
+      amount: 5000n,
+      referenceId: "dep:evt_1",
+      type: "DEPOSIT" as const,
+      createdAt: new Date("2025-01-01"),
+    };
+    depositFundsPspWebhook.mockResolvedValue({ transaction: txn, created: false });
+
     const r = await service.applyDeposit(service.parseBody(basePayload()));
-    expect(r).toEqual({ outcome: "redis_duplicate" });
-    expect(depositFundsPspWebhook).not.toHaveBeenCalled();
+    expect(r).toEqual({ outcome: "credited", transaction: txn, duplicate: true });
+    expect(depositFundsPspWebhook).toHaveBeenCalledWith("user_a", 5000n, "evt_1");
     expect(redisSet).toHaveBeenCalledWith(
       `${PSP_DEPOSIT_IDEMP_KEY_PREFIX}evt_1`,
       "1",

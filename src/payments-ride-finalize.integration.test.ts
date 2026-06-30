@@ -21,18 +21,40 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     keyHash = await bcrypt.hash(fullApiKey, 4);
   });
 
-  function buildContext(opts?: { passengerBalance?: bigint }) {
+  function buildContext(opts?: {
+    passengerBalance?: bigint;
+    connectedIntegratorUserId?: string;
+    connectedUserId?: string;
+    rideDriverId?: string;
+    rideStatus?: string;
+    ridePaymentMethod?: string;
+    hasRideDebit?: boolean;
+  }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
+    const connectedIntegratorUserId = opts?.connectedIntegratorUserId ?? integratorUserId;
+    const connectedUserId = opts?.connectedUserId ?? "driver_user_1";
+    const rideDriverId = opts?.rideDriverId ?? "driver_user_1";
+    const rideStatus = opts?.rideStatus ?? "CREATED";
+    const ridePaymentMethod = opts?.ridePaymentMethod ?? "CARD";
+    const hasRideDebit = opts?.hasRideDebit ?? false;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
     const tx = {
       safeTaxiRide: {
-        findUnique: vi.fn().mockResolvedValue({ id: "ride_1", passengerId: "passenger_1" }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "ride_1",
+          passengerId: "passenger_1",
+          driverId: rideDriverId,
+          status: rideStatus,
+          paymentMethod: ridePaymentMethod,
+        }),
+        update: vi.fn().mockResolvedValue({}),
       },
       connectedAccount: {
         findUnique: vi.fn().mockResolvedValue({
           id: "ca_1",
-          userId: "driver_user_1",
-          integratorUserId,
+          userId: connectedUserId,
+          integratorUserId: connectedIntegratorUserId,
+          status: "ACTIVE",
         }),
       },
       wallet: {
@@ -40,7 +62,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           if (args.where.userId === "passenger_1") {
             return Promise.resolve({ id: "w_passenger", balance: passengerBalance });
           }
-          if (args.where.userId === "driver_user_1") {
+          if (args.where.userId === connectedUserId) {
             return Promise.resolve({ id: "w_driver" });
           }
           if (args.where.userId === "platform_1") {
@@ -48,9 +70,27 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           }
           return Promise.resolve(null);
         }),
+        updateMany: vi.fn().mockImplementation(
+          (args: { where: { userId: string; balance?: { gte: bigint } } }) => {
+            if (
+              args.where.userId === "passenger_1" &&
+              args.where.balance?.gte !== undefined &&
+              passengerBalance < args.where.balance.gte
+            ) {
+              return Promise.resolve({ count: 0 });
+            }
+            return Promise.resolve({ count: 1 });
+          },
+        ),
         update: vi.fn().mockResolvedValue({}),
       },
       transaction: {
+        findUnique: vi.fn().mockImplementation((args: { where: { referenceId: string } }) => {
+          if (hasRideDebit && args.where.referenceId === "ride:ride_1:debit") {
+            return Promise.resolve({ id: "txn_debit", referenceId: args.where.referenceId });
+          }
+          return Promise.resolve(null);
+        }),
         create: vi.fn().mockImplementation((args: { data: { referenceId: string; amount: bigint; type: string } }) => {
           createdTransactions.push({
             referenceId: args.data.referenceId,
@@ -95,6 +135,10 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      del: vi.fn().mockResolvedValue(1),
+      incr: vi.fn().mockResolvedValue(1),
+      expire: vi.fn().mockResolvedValue(1),
+      pexpire: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
 
@@ -137,7 +181,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
 
   it("201 dla poprawnego splitu i wpisy w ledgerze", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
-    const { prisma, createdTransactions } = buildContext();
+    const { prisma, tx, createdTransactions } = buildContext();
     const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
 
     const res = await request(app)
@@ -161,11 +205,32 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         "ride:ride_1:tip",
       ]),
     );
+    expect(tx.wallet.updateMany).toHaveBeenCalledWith({
+      where: { userId: "passenger_1", balance: { gte: 1050n } },
+      data: { balance: { decrement: 1050n } },
+    });
+    expect(tx.safeTaxiRide.update).toHaveBeenCalledWith({
+      where: { id: "ride_1" },
+      data: expect.objectContaining({ status: "SETTLED" }),
+    });
     vi.unstubAllEnvs();
   });
 
-  it("200 duplicate:true dla duplikatu ride_id", async () => {
+  it("409 dla duplikatu Redis bez trwałego rozliczenia w DB", async () => {
     const { prisma } = buildContext();
+    const redis = makeRedis(null);
+    const { app } = createApp({ prisma, redis, wsService: makeWs() });
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PROCESSING_OR_INCOMPLETE" });
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
+  it("200 duplicate:true tylko gdy DB potwierdza rozliczony przejazd", async () => {
+    const { prisma } = buildContext({ rideStatus: "SETTLED", hasRideDebit: true });
     const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
@@ -175,7 +240,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
   });
 
-  it("201 gdy pay-in był wcześniej (saldo pasażera = 0) — skip debetu pasażera, credity wykonane", async () => {
+  it("409 gdy saldo pasażera nie pokrywa base+tip", async () => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
     const { prisma, createdTransactions } = buildContext({ passengerBalance: 0n });
     const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
@@ -185,24 +250,42 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       .set("x-api-key", fullApiKey)
       .send(payload);
 
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      rideId: "ride_1",
-      driverPayout: 850,
-      platformCommission: 200,
-      tip: 50,
-      duplicate: false,
-    });
+    expect(res.status).toBe(409);
+    expect(createdTransactions).toEqual([]);
+    vi.unstubAllEnvs();
+  });
 
-    const refs = createdTransactions.map((t) => t.referenceId);
-    expect(refs).not.toContain("ride:ride_1:debit");
-    expect(refs).toEqual(
-      expect.arrayContaining([
-        "ride:ride_1:driver",
-        "ride:ride_1:platform",
-        "ride:ride_1:tip",
-      ]),
-    );
+  it("404 gdy konto kierowcy należy do innego integratora", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, createdTransactions } = buildContext({
+      connectedIntegratorUserId: "other_integrator",
+    });
+    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(404);
+    expect(createdTransactions).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("404 gdy konto kierowcy nie jest kierowcą przejazdu", async () => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "platform_1");
+    const { prisma, createdTransactions } = buildContext({
+      connectedUserId: "wrong_driver_user",
+    });
+    const { app } = createApp({ prisma, redis: makeRedis("OK"), wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(404);
+    expect(createdTransactions).toEqual([]);
     vi.unstubAllEnvs();
   });
 });
