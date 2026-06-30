@@ -64,16 +64,21 @@ describe("POST /internal/webhooks/autopay-itn", () => {
       del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
 
+    let ledgerCreated = false;
+    const txn = {
+      id: "txn_1",
+      walletId: "w1",
+      amount: 3550n,
+      referenceId: "dep:REMOTE-1",
+      type: "DEPOSIT",
+      createdAt: new Date(),
+    };
     const tx = {
       transaction: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        create: vi.fn().mockResolvedValue({
-          id: "txn_1",
-          walletId: "w1",
-          amount: 3550n,
-          referenceId: "dep:REMOTE-1",
-          type: "DEPOSIT",
-          createdAt: new Date(),
+        findFirst: vi.fn().mockImplementation(() => Promise.resolve(ledgerCreated ? txn : null)),
+        create: vi.fn().mockImplementation(() => {
+          ledgerCreated = true;
+          return Promise.resolve(txn);
         }),
       },
       wallet: {
