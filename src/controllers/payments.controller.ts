@@ -8,6 +8,7 @@ import {
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { InsufficientFundsError } from "../services/wallet.service.js";
 
 const bodySchema = z
   .object({
@@ -98,6 +99,8 @@ export class PaymentsController {
       return;
     }
 
+    let idempotencyKey: string | undefined;
+    let idempotencyReserved = false;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -109,7 +112,7 @@ export class PaymentsController {
         return;
       }
 
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
         res.status(200).json({
@@ -118,9 +121,11 @@ export class PaymentsController {
         });
         return;
       }
+      idempotencyReserved = true;
 
       const finalizeInput = {
         rideId: body.ride_id,
+        integratorUserId: userId,
         baseAmountGrosze: body.base_amount_grosze,
         platformCommissionGrosze: body.platform_commission_grosze,
         driverBasePayoutGrosze: body.driver_base_payout_grosze,
@@ -146,12 +151,28 @@ export class PaymentsController {
         return;
       }
       if (err instanceof RideFinalizeNotFoundError) {
+        if (idempotencyReserved && idempotencyKey !== undefined) {
+          await this.redis.del(idempotencyKey);
+        }
         res.status(404).json({ error: err.message, code: "NOT_FOUND" });
         return;
       }
+      if (err instanceof InsufficientFundsError) {
+        if (idempotencyReserved && idempotencyKey !== undefined) {
+          await this.redis.del(idempotencyKey);
+        }
+        res.status(409).json({ error: "Insufficient funds", code: "INSUFFICIENT_FUNDS" });
+        return;
+      }
       if (err instanceof RideFinalizeConfigError) {
+        if (idempotencyReserved && idempotencyKey !== undefined) {
+          await this.redis.del(idempotencyKey);
+        }
         res.status(503).json({ error: err.message, code: "SERVICE_UNAVAILABLE" });
         return;
+      }
+      if (idempotencyReserved && idempotencyKey !== undefined) {
+        await this.redis.del(idempotencyKey);
       }
       console.error("[payments/ride-finalize]", err);
       res.status(500).json({ error: "Internal server error" });

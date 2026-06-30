@@ -23,7 +23,6 @@ export type PspDepositPayload = z.infer<typeof payloadSchema>;
 
 export type PspDepositWebhookResult =
   | { outcome: "ignored_status" }
-  | { outcome: "redis_duplicate" }
   | { outcome: "credited"; transaction: Transaction; duplicate: boolean };
 
 const IDEMP_TTL_SEC = 86_400;
@@ -48,11 +47,7 @@ export class PspDepositWebhookService {
     }
 
     const idempKey = `${PSP_DEPOSIT_IDEMP_KEY_PREFIX}${payload.pspRefId}`;
-    const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
-    if (setOk !== "OK") {
-      return { outcome: "redis_duplicate" };
-    }
-
+    await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
     const amount = BigInt(payload.amount);
 
     try {

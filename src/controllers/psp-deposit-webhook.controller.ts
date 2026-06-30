@@ -22,16 +22,6 @@ export class PspDepositWebhookController {
         res.status(200).json({ acknowledged: true, credited: false });
         return;
       }
-      if (result.outcome === "redis_duplicate") {
-        res.status(200).json({
-          acknowledged: true,
-          credited: false,
-          duplicate: true,
-          reason: "redis_idempotent",
-        });
-        return;
-      }
-
       res.status(200).json({
         acknowledged: true,
         credited: true,

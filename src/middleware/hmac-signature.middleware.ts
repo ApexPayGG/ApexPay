@@ -58,6 +58,13 @@ export function createHmacSignatureMiddleware(options: HmacSignatureOptions) {
   const keys = options.secretKeys ?? [];
 
   return (req: Request, res: Response, next: NextFunction): void => {
+    if (keys.length === 0 && process.env.NODE_ENV === "production") {
+      res.status(503).json({
+        error: "Service Unavailable",
+        message: "Brak konfiguracji sekretu HMAC.",
+      });
+      return;
+    }
     if (keys.length === 0) {
       next();
       return;

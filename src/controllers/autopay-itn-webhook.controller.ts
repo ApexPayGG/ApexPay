@@ -44,6 +44,7 @@ export class AutopayItnWebhookController {
   ) {}
 
   async handle(req: Request, res: Response): Promise<void> {
+    let successIdempKey: string | undefined;
     try {
       const rawTransactions = req.body?.transactions;
       if (typeof rawTransactions !== "string" || rawTransactions.trim().length === 0) {
@@ -59,13 +60,10 @@ export class AutopayItnWebhookController {
       }
 
       const idempKey = `${IDEMP_PREFIX}${itn.OrderID}:${itn.RemoteID}`;
-      const setOk = await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
-      if (setOk !== "OK") {
-        res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
-        return;
-      }
 
       if (itn.PaymentStatus === "SUCCESS") {
+        successIdempKey = idempKey;
+        await this.redis.set(idempKey, "1", "EX", IDEMP_TTL_SEC, "NX");
         const userId = userIdFromOrderId(itn.OrderID);
         const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
         if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
@@ -100,6 +98,9 @@ export class AutopayItnWebhookController {
 
       res.status(200).type("application/xml").send(confirmationXml(itn.ServiceID, itn.OrderID));
     } catch (err) {
+      if (successIdempKey !== undefined) {
+        await this.redis.del(successIdempKey);
+      }
       if (err instanceof WalletNotFoundError || err instanceof RangeError) {
         contextLogger().warn(
           { err: err.message },

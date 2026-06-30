@@ -27,21 +27,6 @@ describe("PspDepositWebhookController", () => {
     expect(res.json).toHaveBeenCalledWith({ acknowledged: true, credited: false });
   });
 
-  it("returns 200 for redis duplicate replay", async () => {
-    const applyDeposit = vi.fn().mockResolvedValue({ outcome: "redis_duplicate" });
-    const parseBody = vi.fn().mockReturnValue({});
-    const psp = { parseBody, applyDeposit } as unknown as PspDepositWebhookService;
-    const c = new PspDepositWebhookController(psp);
-    const res = createRes();
-    await c.handle({ body: {} } as never, res as never);
-    expect(res.json).toHaveBeenCalledWith({
-      acknowledged: true,
-      credited: false,
-      duplicate: true,
-      reason: "redis_idempotent",
-    });
-  });
-
   it("returns 200 with transaction ids when credited", async () => {
     const applyDeposit = vi.fn().mockResolvedValue({
       outcome: "credited",
