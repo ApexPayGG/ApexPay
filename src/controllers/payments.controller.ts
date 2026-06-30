@@ -164,7 +164,6 @@ export class PaymentsController {
 
       const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
       if (idemSet === null) {
-        await this.redis.del(idempotencyKey);
         res.status(409).json({
           error: "Ride finalization is still processing or missing durable confirmation.",
           code: "PROCESSING_OR_INCOMPLETE",
