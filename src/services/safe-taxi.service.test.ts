@@ -11,6 +11,7 @@ import {
   SafeTaxiService,
   splitSafeTaxiFare,
 } from "./safe-taxi.service.js";
+import { InsufficientFundsError } from "./wallet.service.js";
 
 describe("splitSafeTaxiFare", () => {
   it("15% z 10000 gr → 1500 + 8500", () => {
@@ -27,6 +28,110 @@ describe("splitSafeTaxiFare", () => {
 
   it("odrzuca bps > 10000", () => {
     expect(() => splitSafeTaxiFare(100n, 10001n)).toThrow(SafeTaxiConfigError);
+  });
+});
+
+describe("SafeTaxiService.settleRide — CARD", () => {
+  beforeEach(() => {
+    vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "user_platform");
+    vi.stubEnv("SAFE_TAXI_PLATFORM_COMMISSION_BPS", "1500");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("odrzuca rozliczenie CARD bez środków i nie księguje payoutów", async () => {
+    const rideRow = {
+      id: "ride_card_low_balance",
+      passengerId: "user_pass",
+      driverId: "user_driver",
+      paymentMethod: RidePaymentMethod.CARD,
+      status: SafeTaxiRideStatus.CREATED,
+      fareCents: null,
+      platformCommissionCents: null,
+      driverPayoutCents: null,
+      settledAt: null,
+      createdAt: new Date(),
+    };
+
+    let passengerBalance = 500n;
+    let driverBalance = 0n;
+    let platformBalance = 0n;
+
+    const tx = {
+      safeTaxiRide: {
+        findUnique: vi.fn().mockResolvedValue(rideRow),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      transaction: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({}),
+      },
+      wallet: {
+        findUnique: vi.fn().mockImplementation((args: { where: { userId: string } }) => {
+          if (args.where.userId === "user_pass") {
+            return Promise.resolve({ id: "w_pass" });
+          }
+          if (args.where.userId === "user_driver") {
+            return Promise.resolve({ id: "w_driver" });
+          }
+          if (args.where.userId === "user_platform") {
+            return Promise.resolve({ id: "w_platform" });
+          }
+          return Promise.resolve(null);
+        }),
+        update: vi.fn().mockImplementation((args: { where: { userId: string }; data: { balance?: { decrement?: bigint; increment?: bigint } } }) => {
+          const d = args.data.balance;
+          if (args.where.userId === "user_pass" && d?.decrement !== undefined) {
+            passengerBalance -= d.decrement;
+          }
+          if (args.where.userId === "user_driver" && d?.increment !== undefined) {
+            driverBalance += d.increment;
+          }
+          if (args.where.userId === "user_platform" && d?.increment !== undefined) {
+            platformBalance += d.increment;
+          }
+          return Promise.resolve({});
+        }),
+        updateMany: vi.fn().mockImplementation((args: { where: { userId: string; balance?: { gte?: bigint } }; data: { balance?: { decrement?: bigint } } }) => {
+          const minBalance = args.where.balance?.gte;
+          const amount = args.data.balance?.decrement;
+          if (
+            args.where.userId === "user_pass" &&
+            minBalance !== undefined &&
+            amount !== undefined &&
+            passengerBalance >= minBalance
+          ) {
+            passengerBalance -= amount;
+            return Promise.resolve({ count: 1 });
+          }
+          return Promise.resolve({ count: 0 });
+        }),
+      },
+    };
+
+    const prisma = {
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaClient;
+
+    const service = new SafeTaxiService(prisma);
+    await expect(service.settleRide("ride_card_low_balance", 10000n)).rejects.toBeInstanceOf(
+      InsufficientFundsError,
+    );
+
+    expect(passengerBalance).toBe(500n);
+    expect(driverBalance).toBe(0n);
+    expect(platformBalance).toBe(0n);
+    expect(tx.wallet.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: "user_pass",
+        balance: { gte: 10000n },
+      },
+      data: { balance: { decrement: 10000n } },
+    });
+    expect(tx.transaction.create).not.toHaveBeenCalled();
+    expect(tx.safeTaxiRide.update).not.toHaveBeenCalled();
   });
 });
 
