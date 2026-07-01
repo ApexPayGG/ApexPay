@@ -123,6 +123,13 @@ describe("SafeTaxiService.settleRide — CARD", () => {
     expect(passengerBalance).toBe(500n);
     expect(driverBalance).toBe(0n);
     expect(platformBalance).toBe(0n);
+    expect(tx.wallet.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: "user_pass",
+        balance: { gte: 10000n },
+      },
+      data: { balance: { decrement: 10000n } },
+    });
     expect(tx.transaction.create).not.toHaveBeenCalled();
     expect(tx.safeTaxiRide.update).not.toHaveBeenCalled();
   });
