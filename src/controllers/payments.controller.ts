@@ -11,6 +11,7 @@ import {
   RideFinalizeNotFoundError,
   RideFinalizeService,
 } from "../services/ride-finalize.service.js";
+import { confirmRideFinalized } from "../services/ride-finalize-confirmation.service.js";
 
 const bodySchema = z
   .object({
@@ -102,6 +103,7 @@ export class PaymentsController {
     }
 
     let acquiredIdempotencyKey: string | undefined;
+    let settlementCommitted = false;
     try {
       const body = rideFinalizeBodySchema.parse(req.body);
       if (body.platform_commission_grosze + body.driver_base_payout_grosze !== body.base_amount_grosze) {
@@ -112,17 +114,6 @@ export class PaymentsController {
         });
         return;
       }
-
-      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
-      const idemSet = await this.redis.set(idempotencyKey, "1", "EX", 86400, "NX");
-      if (idemSet === null) {
-        res.status(200).json({
-          rideId: body.ride_id,
-          duplicate: true,
-        });
-        return;
-      }
-      acquiredIdempotencyKey = idempotencyKey;
 
       const finalizeInput = {
         rideId: body.ride_id,
@@ -136,7 +127,40 @@ export class PaymentsController {
           ? { passengerRatingStars: body.passenger_rating_stars }
           : {}),
       };
+
+      const idempotencyKey = `idemp:ride-finalize:${body.ride_id}`;
+      const idemSet = await this.redis.set(
+        idempotencyKey,
+        "processing",
+        "EX",
+        86400,
+        "NX",
+      );
+      if (idemSet === null) {
+        const duplicate = await confirmRideFinalized(
+          this.prisma,
+          finalizeInput,
+          userId,
+        );
+        if (duplicate !== null) {
+          await this.redis.set(idempotencyKey, "done", "EX", 86400);
+          res.status(200).json({ ...duplicate, duplicate: true });
+          return;
+        }
+        res.status(409).json({
+          error: "Rozliczenie przejazdu jest w toku.",
+          code: "PROCESSING",
+        });
+        return;
+      }
+      acquiredIdempotencyKey = idempotencyKey;
       const result = await this.rideFinalizeService.finalizeRide(finalizeInput, req);
+      settlementCommitted = true;
+      try {
+        await this.redis.set(idempotencyKey, "done", "EX", 86400);
+      } catch (redisErr) {
+        console.error("[payments/ride-finalize] idempotency done failed", redisErr);
+      }
 
       res.status(201).json({
         rideId: result.rideId,
@@ -146,7 +170,7 @@ export class PaymentsController {
         duplicate: false,
       });
     } catch (err) {
-      if (acquiredIdempotencyKey !== undefined) {
+      if (acquiredIdempotencyKey !== undefined && !settlementCommitted) {
         try {
           await this.redis.del(acquiredIdempotencyKey);
         } catch (redisErr) {

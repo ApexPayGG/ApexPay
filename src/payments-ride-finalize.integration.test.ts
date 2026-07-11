@@ -26,8 +26,14 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     keyHash = await bcrypt.hash(fullApiKey, 4);
   });
 
-  function buildContext(opts?: { passengerBalance?: bigint }) {
+  function buildContext(opts?: {
+    passengerBalance?: bigint;
+    rideStatus?: SafeTaxiRideStatus;
+    existingDebitAmount?: bigint | null;
+  }) {
     const passengerBalance = opts?.passengerBalance ?? 10000n;
+    const rideStatus = opts?.rideStatus ?? SafeTaxiRideStatus.CREATED;
+    const existingDebitAmount = opts?.existingDebitAmount;
     let currentPassengerBalance = passengerBalance;
     const createdTransactions: Array<{ referenceId: string; amount: bigint; type: string }> = [];
     const tx = {
@@ -37,7 +43,7 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
           passengerId: "passenger_1",
           driverId: "driver_user_1",
           paymentMethod: RidePaymentMethod.CARD,
-          status: SafeTaxiRideStatus.CREATED,
+          status: rideStatus,
         }),
         update: vi.fn().mockResolvedValue({}),
       },
@@ -79,6 +85,16 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
         }),
       },
       transaction: {
+        findUnique: vi.fn().mockImplementation((args: { where: { referenceId: string } }) => {
+          if (
+            args.where.referenceId === "ride:ride_1:debit" &&
+            existingDebitAmount !== undefined &&
+            existingDebitAmount !== null
+          ) {
+            return Promise.resolve({ referenceId: args.where.referenceId, amount: existingDebitAmount });
+          }
+          return Promise.resolve(null);
+        }),
         create: vi.fn().mockImplementation((args: { data: { referenceId: string; amount: bigint; type: string } }) => {
           createdTransactions.push({
             referenceId: args.data.referenceId,
@@ -119,10 +135,11 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     return { prisma, tx, createdTransactions };
   }
 
-  function makeRedis(setResult: "OK" | null = "OK"): Redis {
+  function makeRedis(setResult: "OK" | null = "OK", getResult: string | null = null): Redis {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
       set: vi.fn().mockResolvedValue(setResult),
+      get: vi.fn().mockResolvedValue(getResult),
       del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
   }
@@ -196,15 +213,39 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("200 duplicate:true dla duplikatu ride_id", async () => {
-    const { prisma } = buildContext();
-    const { app } = createApp({ prisma, redis: makeRedis(null), wsService: makeWs() });
+  it("200 duplicate:true only when Redis done state has durable settlement", async () => {
+    const { prisma } = buildContext({
+      rideStatus: SafeTaxiRideStatus.SETTLED,
+      existingDebitAmount: -1050n,
+    });
+    const { app } = createApp({ prisma, redis: makeRedis(null, "done"), wsService: makeWs() });
     const res = await request(app)
       .post("/api/v1/payments/ride-finalize")
       .set("x-api-key", fullApiKey)
       .send(payload);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+    expect(res.body).toMatchObject({
+      duplicate: true,
+      rideId: "ride_1",
+      driverPayout: 850,
+      platformCommission: 200,
+      tip: 50,
+    });
+  });
+
+  it("409 for duplicate Redis reservation without durable settlement", async () => {
+    const { prisma, createdTransactions } = buildContext({
+      rideStatus: SafeTaxiRideStatus.CREATED,
+      existingDebitAmount: null,
+    });
+    const { app } = createApp({ prisma, redis: makeRedis(null, "processing"), wsService: makeWs() });
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PROCESSING" });
+    expect(createdTransactions).toHaveLength(0);
   });
 
   it("402 gdy pasażer nie ma środków — bez creditów i z odblokowaniem idempotency", async () => {
