@@ -408,6 +408,31 @@ describe("MatchController.resolveDispute", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 409 and skips payout when match was already settled by v1", async () => {
+    h.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      status: "SETTLED",
+      winnerId: "old",
+    });
+    const res = mockRes();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await h.controller.resolveDispute(
+      {
+        params: { id: "m1" },
+        body: { finalWinnerId: "w1" },
+        user: { id: "arb" },
+      } as MockReq as never,
+      res as never,
+    );
+
+    expect(h.matchUpdate).not.toHaveBeenCalled();
+    expect(h.processPayout).not.toHaveBeenCalled();
+    expect(h.advanceAfterTerminalMatch).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(409);
+    errSpy.mockRestore();
+  });
+
   it("returns 400 when final winner is not an assigned player", async () => {
     h.matchFindUnique.mockResolvedValue({
       id: "m1",
