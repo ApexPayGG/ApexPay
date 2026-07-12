@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { NextFunction, Request, Response } from "express";
 import { createHmacSignatureMiddleware } from "./hmac-signature.middleware.js";
 
@@ -8,6 +8,10 @@ function sign(secret: string, raw: Buffer): string {
 }
 
 describe("createHmacSignatureMiddleware", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("calls next when secret is missing", () => {
     const mw = createHmacSignatureMiddleware({ secretKeys: [] });
     const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
@@ -18,6 +22,26 @@ describe("createHmacSignatureMiddleware", () => {
 
     expect(next).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("fails closed in production when secret is missing", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const mw = createHmacSignatureMiddleware({ secretKeys: [] });
+    const req = { headers: {}, rawBody: Buffer.from("{}") } as Request;
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn(),
+    } as unknown as Response;
+    const next = vi.fn() as NextFunction;
+
+    mw(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Service Unavailable",
+      message: "Brak konfiguracji HMAC dla API.",
+    });
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("returns 401 when header is missing", () => {
