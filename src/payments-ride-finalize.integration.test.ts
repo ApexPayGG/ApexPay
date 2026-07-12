@@ -125,9 +125,21 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       safeTaxiRide: {
         findUnique: vi.fn().mockResolvedValue(
           rideStatus === SafeTaxiRideStatus.SETTLED
-            ? { id: "ride_1", status: SafeTaxiRideStatus.SETTLED }
+            ? {
+                id: "ride_1",
+                status: SafeTaxiRideStatus.SETTLED,
+                driverId: "driver_user_1",
+              }
             : null,
         ),
+      },
+      connectedAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "ca_1",
+          userId: connectedAccountUserId,
+          integratorUserId: connectedAccountIntegratorUserId,
+          status: connectedAccountStatus,
+        }),
       },
       transaction: {
         findUnique: vi.fn().mockResolvedValue(
@@ -229,6 +241,22 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
       .send(payload);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ duplicate: true, rideId: "ride_1" });
+  });
+
+  it("409 dla duplicate:true gdy durable settlement należy do innego integratora", async () => {
+    const { prisma } = buildContext({
+      rideStatus: SafeTaxiRideStatus.SETTLED,
+      connectedAccountIntegratorUserId: "integrator_other",
+    });
+    const { app } = createApp({ prisma, redis: makeRedis(null, "done"), wsService: makeWs() });
+
+    const res = await request(app)
+      .post("/api/v1/payments/ride-finalize")
+      .set("x-api-key", fullApiKey)
+      .send(payload);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "IDEMPOTENCY_PENDING" });
   });
 
   it("409 dla duplikatu bez durable settlement zamiast fałszywego sukcesu", async () => {
