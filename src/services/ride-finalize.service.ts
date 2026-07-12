@@ -64,16 +64,26 @@ export class RideFinalizeService {
     private readonly auditLogService?: AuditLogService,
   ) {}
 
-  async hasDurableFinalization(rideId: string): Promise<boolean> {
-    const id = rideId.trim();
-    if (id.length === 0) {
+  async hasDurableFinalization(params: {
+    rideId: string;
+    driverConnectedAccountId: string;
+    integratorUserId: string;
+  }): Promise<boolean> {
+    const id = params.rideId.trim();
+    const connectedAccountId = params.driverConnectedAccountId.trim();
+    const integratorUserId = params.integratorUserId.trim();
+    if (id.length === 0 || connectedAccountId.length === 0 || integratorUserId.length === 0) {
       return false;
     }
 
-    const [ride, debit] = await Promise.all([
+    const [ride, connectedAccount, debit] = await Promise.all([
       this.prisma.safeTaxiRide.findUnique({
         where: { id },
-        select: { status: true },
+        select: { status: true, driverId: true },
+      }),
+      this.prisma.connectedAccount.findUnique({
+        where: { id: connectedAccountId },
+        select: { userId: true, integratorUserId: true, status: true },
       }),
       this.prisma.transaction.findUnique({
         where: { referenceId: `ride:${id}:debit` },
@@ -81,7 +91,14 @@ export class RideFinalizeService {
       }),
     ]);
 
-    return ride?.status === SafeTaxiRideStatus.SETTLED && debit !== null;
+    return (
+      ride?.status === SafeTaxiRideStatus.SETTLED &&
+      connectedAccount !== null &&
+      connectedAccount.status === ConnectedAccountStatus.ACTIVE &&
+      connectedAccount.integratorUserId === integratorUserId &&
+      connectedAccount.userId === ride.driverId &&
+      debit !== null
+    );
   }
 
   async finalizeRide(input: RideFinalizeInput, req?: Request): Promise<RideFinalizeResult> {

@@ -128,7 +128,11 @@ export class PaymentsController {
         const state = await this.redis.get(idempotencyKey);
         if (
           state === RIDE_FINALIZE_DONE &&
-          (await this.rideFinalizeService.hasDurableFinalization(body.ride_id))
+          (await this.rideFinalizeService.hasDurableFinalization({
+            rideId: body.ride_id,
+            driverConnectedAccountId: body.driver_connected_account_id,
+            integratorUserId: userId,
+          }))
         ) {
           res.status(200).json({
             rideId: body.ride_id,
