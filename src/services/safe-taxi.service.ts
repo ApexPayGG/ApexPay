@@ -351,16 +351,12 @@ export class SafeTaxiService {
           throw new WalletNotFoundError();
         }
 
-        try {
-          await tx.wallet.update({
-            where: { userId: ride.passengerId },
-            data: { balance: { decrement: fareCents } },
-          });
-        } catch (err) {
-          if (isInsufficientFundsDbError(err)) {
-            throw new InsufficientFundsError();
-          }
-          throw err;
+        const debitResult = await tx.wallet.updateMany({
+          where: { userId: ride.passengerId, balance: { gte: fareCents } },
+          data: { balance: { decrement: fareCents } },
+        });
+        if (debitResult.count !== 1) {
+          throw new InsufficientFundsError();
         }
 
         await tx.wallet.update({
