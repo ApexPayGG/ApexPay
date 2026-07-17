@@ -27,6 +27,7 @@ for (const [network, prefix] of [
   ["172.16.0.0", 12],
   ["192.0.0.0", 24],
   ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
   ["192.168.0.0", 16],
   ["198.18.0.0", 15],
   ["198.51.100.0", 24],
@@ -41,11 +42,17 @@ const blockedIpv6 = new BlockList();
 for (const [network, prefix] of [
   ["::", 128],
   ["::1", 128],
+  ["::", 96],
   ["::ffff:0:0", 96],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
   ["100::", 64],
+  ["2001::", 23],
   ["2001:db8::", 32],
+  ["2002::", 16],
   ["fc00::", 7],
   ["fe80::", 10],
+  ["fec0::", 10],
   ["ff00::", 8],
 ] as const) {
   blockedIpv6.addSubnet(network, prefix, "ipv6");
@@ -112,12 +119,15 @@ export const resolveWebhookHostname: WebhookHostnameResolver = async (hostname) 
 export async function assertWebhookUrlResolvesPublic(
   rawUrl: string,
   resolveHostname: WebhookHostnameResolver = resolveWebhookHostname,
-): Promise<URL> {
+): Promise<{ url: URL; addresses: readonly ResolvedWebhookAddress[] }> {
   const url = parseSafeWebhookUrl(rawUrl);
   const hostname = normalizedHostname(url);
   const literalFamily = isIP(hostname);
   if (literalFamily !== 0) {
-    return url;
+    return {
+      url,
+      addresses: [{ address: hostname, family: literalFamily as 4 | 6 }],
+    };
   }
 
   const addresses = await resolveHostname(hostname);
@@ -127,5 +137,5 @@ export async function assertWebhookUrlResolvesPublic(
   ) {
     throw new UnsafeWebhookUrlError();
   }
-  return url;
+  return { url, addresses };
 }
