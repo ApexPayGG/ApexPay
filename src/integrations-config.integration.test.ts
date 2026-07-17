@@ -190,6 +190,30 @@ describe("/api/v1/integrations/config (integration)", () => {
     expect(res.body.code).toBe("BAD_REQUEST");
   });
 
+  it.each([
+    "http://127.0.0.1:3000/internal",
+    "https://localhost/admin",
+    "https://169.254.169.254/latest/meta-data",
+    "https://[::1]/internal",
+  ])("PUT odrzuca niebezpieczny webhook URL %s", async (webhookUrl) => {
+    const redis = { ping: vi.fn().mockResolvedValue("PONG") } as unknown as Redis;
+    const wsService = { notifyWallet: vi.fn() } as unknown as WebSocketService;
+    const prisma = buildPrisma(null);
+    const { app } = createApp({ prisma, redis, wsService });
+
+    const res = await request(app)
+      .put("/api/v1/integrations/config")
+      .set("x-api-key", fullApiKey)
+      .send({ webhookUrl });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("BAD_REQUEST");
+    const client = prisma as unknown as {
+      integratorConfig: { create: ReturnType<typeof vi.fn> };
+    };
+    expect(client.integratorConfig.create).not.toHaveBeenCalled();
+  });
+
   it("drugi PUT aktualizuje tylko URL — sekret bez zmian", async () => {
     const existing: ConfigRow = {
       id: "ic_existing",

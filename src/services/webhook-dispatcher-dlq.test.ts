@@ -16,14 +16,17 @@ type OutboxRow = {
   nextAttemptAt: Date;
 };
 
-function createOutboxMock(initial: OutboxRow) {
+function createOutboxMock(
+  initial: OutboxRow,
+  webhookUrl = "https://example.com/webhook",
+) {
   const outbox = new Map<string, OutboxRow>();
   outbox.set(initial.id, { ...initial });
 
   const prisma = {
     integratorConfig: {
       findUnique: vi.fn().mockResolvedValue({
-        webhookUrl: "https://example.com/webhook",
+        webhookUrl,
         webhookSecret: "whsec_test",
       }),
     },
@@ -128,5 +131,38 @@ describe("WebhookDispatcherService → dead letter po MAX_DELIVERY_ATTEMPTS", ()
     const dlArg = deadLetterCreates.mock.calls[0]?.[0] as { data: { attempts: number } };
     expect(dlArg.data.attempts).toBe(MAX_DELIVERY_ATTEMPTS);
     expect(fetchImpl).toHaveBeenCalledTimes(MAX_DELIVERY_ATTEMPTS);
+  });
+});
+
+describe("WebhookDispatcherService → SSRF protection", () => {
+  it("nie wysyła webhooka, gdy publiczna nazwa hosta rozwiązuje się do prywatnego IP", async () => {
+    const row: OutboxRow = {
+      id: "o-private",
+      integratorUserId: "u1",
+      eventType: "charge.succeeded",
+      payload: { id: "c1" },
+      attempts: 0,
+      status: WebhookStatus.PENDING,
+      nextAttemptAt: new Date(0),
+    };
+    const { prisma, outbox } = createOutboxMock(row, "https://hooks.example.com/webhook");
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const resolveHostname = vi
+      .fn()
+      .mockResolvedValue([{ address: "10.20.30.40", family: 4 as const }]);
+
+    const dispatcher = new WebhookDispatcherService(prisma, {
+      fetchImpl,
+      resolveHostname,
+    });
+
+    await dispatcher.processOutboxById(row.id);
+
+    expect(resolveHostname).toHaveBeenCalledWith("hooks.example.com");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(outbox.get(row.id)).toMatchObject({
+      status: WebhookStatus.FAILED,
+      attempts: 1,
+    });
   });
 });
