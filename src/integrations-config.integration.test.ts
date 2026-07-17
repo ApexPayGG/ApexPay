@@ -195,6 +195,8 @@ describe("/api/v1/integrations/config (integration)", () => {
     "https://localhost/admin",
     "https://169.254.169.254/latest/meta-data",
     "https://[::1]/internal",
+    "https://[5f00::1]/internal",
+    "https://[4000::1]/internal",
   ])("PUT odrzuca niebezpieczny webhook URL %s", async (webhookUrl) => {
     const redis = { ping: vi.fn().mockResolvedValue("PONG") } as unknown as Redis;
     const wsService = { notifyWallet: vi.fn() } as unknown as WebSocketService;

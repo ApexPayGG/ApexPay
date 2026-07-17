@@ -173,6 +173,40 @@ describe("WebhookDispatcherService → SSRF protection", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("próbuje kolejnego zweryfikowanego adresu po błędzie połączenia", async () => {
+    const row: OutboxRow = {
+      id: "o-multi-address",
+      integratorUserId: "u1",
+      eventType: "charge.succeeded",
+      payload: { id: "c1" },
+      attempts: 0,
+      status: WebhookStatus.PENDING,
+      nextAttemptAt: new Date(0),
+    };
+    const { prisma } = createOutboxMock(row, "https://hooks.example.com/webhook");
+    const postWebhook = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connect ENETUNREACH"))
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    const resolveHostname = vi.fn().mockResolvedValue([
+      { address: "2001:4860:4860::8888", family: 6 as const },
+      { address: "93.184.216.34", family: 4 as const },
+    ]);
+
+    const dispatcher = new WebhookDispatcherService(prisma, {
+      postWebhook,
+      resolveHostname,
+    });
+
+    await dispatcher.processOutboxById(row.id);
+
+    expect(postWebhook).toHaveBeenCalledTimes(2);
+    expect(postWebhook.mock.calls.map((call) => call[0].address)).toEqual([
+      { address: "2001:4860:4860::8888", family: 6 },
+      { address: "93.184.216.34", family: 4 },
+    ]);
+  });
+
   it("nie wysyła webhooka, gdy publiczna nazwa hosta rozwiązuje się do prywatnego IP", async () => {
     const row: OutboxRow = {
       id: "o-private",
