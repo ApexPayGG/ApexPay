@@ -1,7 +1,9 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Prisma, WebhookStatus } from "@prisma/client";
 import { contextLogger, logger } from "../lib/logger.js";
+import { createFetchWebhookPost, postPinnedWebhook, postWebhookToResolvedAddresses, raceWithAbort } from "../lib/pinned-webhook-request.js";
 import { runWithContext } from "../lib/request-context.js";
+import { assertWebhookUrlResolvesPublic, resolveWebhookHostname } from "../lib/webhook-url-policy.js";
 import { archiveWebhookOutboxToDeadLetter } from "./webhook-dead-letter.service.js";
 /** Eksportowane do testów (zsynchronizuj z logiką retry → dead letter). */
 export const MAX_DELIVERY_ATTEMPTS = 5;
@@ -39,13 +41,17 @@ export function verifyWebhookSignature(bodyUtf8, webhookSecret, signatureHex) {
 export class WebhookDispatcherService {
     prisma;
     batchSize;
-    fetchImpl;
     requestTimeoutMs;
+    resolveHostname;
+    postWebhook;
     constructor(prisma, options = {}) {
         this.prisma = prisma;
         this.batchSize = options.batchSize ?? DEFAULT_BATCH;
-        this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
         this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+        this.resolveHostname = options.resolveHostname ?? resolveWebhookHostname;
+        this.postWebhook =
+            options.postWebhook ??
+                (options.fetchImpl === undefined ? postPinnedWebhook : createFetchWebhookPost(options.fetchImpl));
     }
     /**
      * Zawieszone PROCESSING (worker padł) — wracają do kolejki jako FAILED z natychmiastowym `nextAttemptAt`.
@@ -163,11 +169,13 @@ export class WebhookDispatcherService {
         contextLogger().info({ outboxId: row.id, attempt: attemptNo, webhookUrl: url }, "Webhook: delivery attempt");
         let httpOk = false;
         let lastError = "http_request_failed";
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(new Error("Webhook request timed out")), this.requestTimeoutMs);
         try {
-            const ac = new AbortController();
-            const t = setTimeout(() => ac.abort(), this.requestTimeoutMs);
-            const res = await this.fetchImpl(url, {
-                method: "POST",
+            const target = await raceWithAbort(assertWebhookUrlResolvesPublic(url, this.resolveHostname), ac.signal);
+            const res = await postWebhookToResolvedAddresses(this.postWebhook, {
+                url: target.url,
+                addresses: target.addresses,
                 headers: {
                     "Content-Type": "application/json",
                     "x-apexpay-signature": signature,
@@ -175,7 +183,6 @@ export class WebhookDispatcherService {
                 body: bodyString,
                 signal: ac.signal,
             });
-            clearTimeout(t);
             httpOk = res.ok;
             if (!res.ok) {
                 lastError = `HTTP_${res.status}`;
@@ -184,6 +191,9 @@ export class WebhookDispatcherService {
         catch (e) {
             httpOk = false;
             lastError = e instanceof Error ? e.message : String(e);
+        }
+        finally {
+            clearTimeout(timer);
         }
         if (httpOk) {
             contextLogger().info({ outboxId: row.id, webhookUrl: url }, "Webhook: delivery succeeded");
