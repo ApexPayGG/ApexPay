@@ -131,6 +131,10 @@ describe("WebhookDispatcherService → dead letter po MAX_DELIVERY_ATTEMPTS", ()
     const dlArg = deadLetterCreates.mock.calls[0]?.[0] as { data: { attempts: number } };
     expect(dlArg.data.attempts).toBe(MAX_DELIVERY_ATTEMPTS);
     expect(fetchImpl).toHaveBeenCalledTimes(MAX_DELIVERY_ATTEMPTS);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://example.com/webhook",
+      expect.objectContaining({ redirect: "error" }),
+    );
   });
 });
 

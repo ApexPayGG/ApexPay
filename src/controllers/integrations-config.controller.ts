@@ -1,11 +1,18 @@
 import type { Request, Response } from "express";
 import type { IntegratorConfig } from "@prisma/client";
 import { z, ZodError } from "zod";
+import { isSafeWebhookUrlForStorage } from "../lib/webhook-url-policy.js";
 import { IntegratorConfigService } from "../services/integrator-config.service.js";
 
 const putBodySchema = z
   .object({
-    webhookUrl: z.string().url().nullable(),
+    webhookUrl: z
+      .string()
+      .url()
+      .refine(isSafeWebhookUrlForStorage, {
+        message: "Webhook URL must use HTTPS and cannot target an internal address.",
+      })
+      .nullable(),
   })
   .strict();
 

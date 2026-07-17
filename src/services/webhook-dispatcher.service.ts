@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient, WebhookStatus } from "@prisma/client";
 import type { ApexpayWebhookRabbitMq } from "../infra/rabbitmq.js";
 import { contextLogger, logger } from "../lib/logger.js";
 import { runWithContext } from "../lib/request-context.js";
+import { assertWebhookUrlResolvesPublic, resolveWebhookHostname, type WebhookHostnameResolver } from "../lib/webhook-url-policy.js";
 import { archiveWebhookOutboxToDeadLetter } from "./webhook-dead-letter.service.js";
 
 /** Eksportowane do testów (zsynchronizuj z logiką retry → dead letter). */
@@ -49,12 +50,14 @@ export type WebhookDispatcherOptions = {
   batchSize?: number;
   fetchImpl?: typeof fetch;
   requestTimeoutMs?: number;
+  resolveHostname?: WebhookHostnameResolver;
 };
 
 export class WebhookDispatcherService {
   private readonly batchSize: number;
   private readonly fetchImpl: typeof fetch;
   private readonly requestTimeoutMs: number;
+  private readonly resolveHostname: WebhookHostnameResolver;
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -63,6 +66,7 @@ export class WebhookDispatcherService {
     this.batchSize = options.batchSize ?? DEFAULT_BATCH;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+    this.resolveHostname = options.resolveHostname ?? resolveWebhookHostname;
   }
 
   /**
@@ -215,10 +219,12 @@ export class WebhookDispatcherService {
     let httpOk = false;
     let lastError = "http_request_failed";
     try {
+      await assertWebhookUrlResolvesPublic(url, this.resolveHostname);
       const ac = new AbortController();
       const t = setTimeout(() => ac.abort(), this.requestTimeoutMs);
       const res = await this.fetchImpl(url, {
         method: "POST",
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           "x-apexpay-signature": signature,
