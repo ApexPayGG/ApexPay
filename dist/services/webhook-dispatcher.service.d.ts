@@ -1,5 +1,7 @@
 import { type PrismaClient } from "@prisma/client";
 import type { ApexpayWebhookRabbitMq } from "../infra/rabbitmq.js";
+import { type WebhookPost } from "../lib/pinned-webhook-request.js";
+import { type WebhookHostnameResolver } from "../lib/webhook-url-policy.js";
 /** Eksportowane do testów (zsynchronizuj z logiką retry → dead letter). */
 export declare const MAX_DELIVERY_ATTEMPTS = 5;
 /** Opóźnienie kolejnej próby po nieudanej dostawie (`attempts` już po inkrementacji). */
@@ -11,12 +13,15 @@ export type WebhookDispatcherOptions = {
     batchSize?: number;
     fetchImpl?: typeof fetch;
     requestTimeoutMs?: number;
+    resolveHostname?: WebhookHostnameResolver;
+    postWebhook?: WebhookPost;
 };
 export declare class WebhookDispatcherService {
     private readonly prisma;
     private readonly batchSize;
-    private readonly fetchImpl;
     private readonly requestTimeoutMs;
+    private readonly resolveHostname;
+    private readonly postWebhook;
     constructor(prisma: PrismaClient, options?: WebhookDispatcherOptions);
     /**
      * Zawieszone PROCESSING (worker padł) — wracają do kolejki jako FAILED z natychmiastowym `nextAttemptAt`.
