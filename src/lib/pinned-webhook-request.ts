@@ -17,6 +17,27 @@ export type WebhookPostResult = {
 
 export type WebhookPost = (request: WebhookPostRequest) => Promise<WebhookPostResult>;
 
+export async function postWebhookToResolvedAddresses(
+  postWebhook: WebhookPost,
+  request: Omit<WebhookPostRequest, "address"> & {
+    addresses: readonly ResolvedWebhookAddress[];
+  },
+): Promise<WebhookPostResult> {
+  const { addresses, ...baseRequest } = request;
+  let lastError: unknown = new Error("Webhook hostname resolved without addresses");
+  for (const address of addresses) {
+    try {
+      return await postWebhook({ ...baseRequest, address });
+    } catch (error) {
+      if (request.signal.aborted) {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     return Promise.reject(signal.reason);

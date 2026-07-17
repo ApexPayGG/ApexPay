@@ -50,6 +50,7 @@ for (const [network, prefix] of [
   ["2001::", 23],
   ["2001:db8::", 32],
   ["2002::", 16],
+  ["3fff::", 20],
   ["fc00::", 7],
   ["fe80::", 10],
   ["fec0::", 10],
@@ -57,6 +58,8 @@ for (const [network, prefix] of [
 ] as const) {
   blockedIpv6.addSubnet(network, prefix, "ipv6");
 }
+const globalUnicastIpv6 = new BlockList();
+globalUnicastIpv6.addSubnet("2000::", 3, "ipv6");
 
 function normalizedHostname(url: URL): string {
   const withoutBrackets = url.hostname.replace(/^\[|\]$/g, "");
@@ -67,7 +70,11 @@ function isPublicIpAddress(address: string, family: 4 | 6): boolean {
   if (family === 4) {
     return isIP(address) === 4 && !blockedIpv4.check(address, "ipv4");
   }
-  return isIP(address) === 6 && !blockedIpv6.check(address, "ipv6");
+  return (
+    isIP(address) === 6 &&
+    globalUnicastIpv6.check(address, "ipv6") &&
+    !blockedIpv6.check(address, "ipv6")
+  );
 }
 
 export function parseSafeWebhookUrl(rawUrl: string): URL {

@@ -2,7 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Prisma, type PrismaClient, WebhookStatus } from "@prisma/client";
 import type { ApexpayWebhookRabbitMq } from "../infra/rabbitmq.js";
 import { contextLogger, logger } from "../lib/logger.js";
-import { createFetchWebhookPost, postPinnedWebhook, raceWithAbort, type WebhookPost } from "../lib/pinned-webhook-request.js";
+import { createFetchWebhookPost, postPinnedWebhook, postWebhookToResolvedAddresses, raceWithAbort, type WebhookPost } from "../lib/pinned-webhook-request.js";
 import { runWithContext } from "../lib/request-context.js";
 import { assertWebhookUrlResolvesPublic, resolveWebhookHostname, type WebhookHostnameResolver } from "../lib/webhook-url-policy.js";
 import { archiveWebhookOutboxToDeadLetter } from "./webhook-dead-letter.service.js";
@@ -217,13 +217,9 @@ export class WebhookDispatcherService {
         assertWebhookUrlResolvesPublic(url, this.resolveHostname),
         ac.signal,
       );
-      const address = target.addresses[0];
-      if (address === undefined) {
-        throw new Error("Webhook hostname resolved without addresses");
-      }
-      const res = await this.postWebhook({
+      const res = await postWebhookToResolvedAddresses(this.postWebhook, {
         url: target.url,
-        address,
+        addresses: target.addresses,
         headers: {
           "Content-Type": "application/json",
           "x-apexpay-signature": signature,
