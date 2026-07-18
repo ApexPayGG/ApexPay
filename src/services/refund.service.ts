@@ -212,7 +212,7 @@ export type ValidateRefundEligibilityInput = {
  * Walidacja biznesowa zwrotu (okno czasowe, limity kwot, integralność splitu).
  */
 export async function validateRefundEligibility(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   input: ValidateRefundEligibilityInput,
 ): Promise<void> {
   const { charge, integratorUserId, refundAmount, coveredBy, composition } = input;
@@ -371,6 +371,22 @@ export class RefundService {
 
       const out = await this.prisma.$transaction(
         async (tx) => {
+          await tx.$queryRaw(
+            Prisma.sql`
+              SELECT "id"
+              FROM "marketplace_charges"
+              WHERE "id" = ${charge.id}
+              FOR UPDATE
+            `,
+          );
+          await validateRefundEligibility(tx, {
+            charge,
+            integratorUserId: params.integratorUserId,
+            refundAmount: params.amount,
+            coveredBy: params.coveredBy,
+            composition,
+          });
+
           const refundId = randomUUID();
           const platformUserId = getMarketplacePlatformUserId();
 
@@ -586,7 +602,7 @@ export class RefundService {
           return { refund: refundRow, webhookOutboxId: wo.id };
         },
         {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
           maxWait: 5000,
           timeout: 20000,
         },

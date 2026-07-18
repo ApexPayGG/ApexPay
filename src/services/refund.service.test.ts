@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { RefundCoveredBy, type MarketplaceCharge, type PrismaClient } from "@prisma/client";
+import {
+  Prisma,
+  RefundCoveredBy,
+  type MarketplaceCharge,
+  type PrismaClient,
+} from "@prisma/client";
 import {
   allocateRefundCostConnectedOnly,
   allocateRefundCostSplit,
@@ -149,6 +154,93 @@ describe("RefundService.createRefund — idempotencja Redis", () => {
       }),
     ).rejects.toBeInstanceOf(IdempotencyConflictError);
     expect(redis.del).not.toHaveBeenCalled();
+  });
+});
+
+describe("RefundService.createRefund — współbieżny limit zwrotów", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("ponownie sprawdza limit po zablokowaniu charge, zanim ruszy portfele", async () => {
+    vi.stubEnv("APEXPAY_PLATFORM_USER_ID", "platform-user");
+    const charge: MarketplaceCharge = {
+      id: "ch-concurrent",
+      debitUserId: "payer-user",
+      integratorUserId: "integrator-user",
+      amountCents: 1000n,
+      currency: "PLN",
+      idempotencyKey: "charge-idem",
+      createdAt: new Date(),
+    };
+    const walletFindUnique = vi.fn().mockRejectedValue(new Error("wallet access must not happen"));
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: charge.id }]),
+      refund: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 900n } }),
+      },
+      connectedAccount: {
+        findUnique: vi.fn().mockResolvedValue({ id: "ca1" }),
+      },
+      wallet: {
+        findUnique: walletFindUnique,
+      },
+    };
+    const transaction = vi.fn(
+      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+    const prisma = {
+      marketplaceCharge: {
+        findUnique: vi.fn().mockResolvedValue(charge),
+      },
+      transaction: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            referenceId: `mkt:${charge.id}:credit:platform`,
+            amount: charge.amountCents,
+          },
+        ]),
+      },
+      refund: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }),
+      },
+      connectedAccount: {
+        findUnique: vi.fn().mockResolvedValue({ id: "ca1" }),
+      },
+      $transaction: transaction,
+    } as unknown as PrismaClient;
+    const redis = {
+      set: vi.fn().mockResolvedValue("OK"),
+      del: vi.fn().mockResolvedValue(1),
+    };
+    const service = new RefundService(prisma);
+
+    await expect(
+      service.createRefund({
+        redis: redis as never,
+        integratorUserId: charge.integratorUserId,
+        chargeId: charge.id,
+        amount: 200n,
+        coveredBy: RefundCoveredBy.PLATFORM,
+        idempotencyKey: "refund-concurrent",
+        initiatedBy: charge.integratorUserId,
+      }),
+    ).rejects.toBeInstanceOf(RefundAmountExceededError);
+
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(tx.refund.aggregate).toHaveBeenCalledOnce();
+    const lockQuery = tx.$queryRaw.mock.calls[0]?.[0] as { sql: string };
+    expect(lockQuery.sql).toMatch(/FROM "marketplace_charges"[\s\S]*FOR UPDATE/);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.refund.aggregate.mock.invocationCallOrder[0]!,
+    );
+    expect(walletFindUnique).not.toHaveBeenCalled();
+    expect(transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      }),
+    );
   });
 });
 
