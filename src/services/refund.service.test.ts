@@ -229,6 +229,11 @@ describe("RefundService.createRefund — współbieżny limit zwrotów", () => {
 
     expect(tx.$queryRaw).toHaveBeenCalledOnce();
     expect(tx.refund.aggregate).toHaveBeenCalledOnce();
+    const lockQuery = tx.$queryRaw.mock.calls[0]?.[0] as { sql: string };
+    expect(lockQuery.sql).toMatch(/FROM "marketplace_charges"[\s\S]*FOR UPDATE/);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.refund.aggregate.mock.invocationCallOrder[0]!,
+    );
     expect(walletFindUnique).not.toHaveBeenCalled();
     expect(transaction).toHaveBeenCalledWith(
       expect.any(Function),
