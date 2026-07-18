@@ -602,7 +602,7 @@ export class RefundService {
           return { refund: refundRow, webhookOutboxId: wo.id };
         },
         {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
           maxWait: 5000,
           timeout: 20000,
         },
