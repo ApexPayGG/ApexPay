@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { RefundCoveredBy, type MarketplaceCharge, type PrismaClient } from "@prisma/client";
+import {
+  Prisma,
+  RefundCoveredBy,
+  type MarketplaceCharge,
+  type PrismaClient,
+} from "@prisma/client";
 import {
   allocateRefundCostConnectedOnly,
   allocateRefundCostSplit,
@@ -181,6 +186,9 @@ describe("RefundService.createRefund — współbieżny limit zwrotów", () => {
         findUnique: walletFindUnique,
       },
     };
+    const transaction = vi.fn(
+      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     const prisma = {
       marketplaceCharge: {
         findUnique: vi.fn().mockResolvedValue(charge),
@@ -199,9 +207,7 @@ describe("RefundService.createRefund — współbieżny limit zwrotów", () => {
       connectedAccount: {
         findUnique: vi.fn().mockResolvedValue({ id: "ca1" }),
       },
-      $transaction: vi.fn(
-        async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-      ),
+      $transaction: transaction,
     } as unknown as PrismaClient;
     const redis = {
       set: vi.fn().mockResolvedValue("OK"),
@@ -224,6 +230,12 @@ describe("RefundService.createRefund — współbieżny limit zwrotów", () => {
     expect(tx.$queryRaw).toHaveBeenCalledOnce();
     expect(tx.refund.aggregate).toHaveBeenCalledOnce();
     expect(walletFindUnique).not.toHaveBeenCalled();
+    expect(transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      }),
+    );
   });
 });
 
