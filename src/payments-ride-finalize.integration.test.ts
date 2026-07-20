@@ -142,6 +142,9 @@ describe("POST /api/v1/payments/ride-finalize (integration)", () => {
   function makeRedis(setResult: "OK" | null = "OK"): Redis {
     return {
       ping: vi.fn().mockResolvedValue("PONG"),
+      incr: vi.fn().mockResolvedValue(1),
+      pexpire: vi.fn().mockResolvedValue(1),
+      pttl: vi.fn().mockResolvedValue(60_000),
       set: vi.fn().mockResolvedValue(setResult),
       del: vi.fn().mockResolvedValue(1),
     } as unknown as Redis;
