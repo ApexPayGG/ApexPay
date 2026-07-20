@@ -196,7 +196,7 @@ export class SafeTaxiService {
     );
 
     const refPassenger = `stx:${rideId}:passenger`;
-    const refRideFinalizeDebit = `ride:${rideId}:debit`;
+    const refRideFinalizePayout = `ride:${rideId}:driver`;
     const refCashCommission = `stx:${rideId}:commission_cash`;
     const refCashCommissionPlatform = `stx:${rideId}:commission_cash:platform`;
 
@@ -217,6 +217,16 @@ export class SafeTaxiService {
         }
         if (ride.status !== SafeTaxiRideStatus.CREATED) {
           throw new SafeTaxiInvalidStateError("Przejazd nie oczekuje na rozliczenie.");
+        }
+
+        const existingRideFinalizePayout = await tx.transaction.findUnique({
+          where: { referenceId: refRideFinalizePayout },
+          select: { id: true },
+        });
+        if (existingRideFinalizePayout !== null) {
+          throw new SafeTaxiInvalidStateError(
+            "Przejazd został już rozliczony przez endpoint integracyjny.",
+          );
         }
 
         if (ride.paymentMethod === RidePaymentMethod.CASH) {
@@ -310,16 +320,6 @@ export class SafeTaxiService {
             platformCommissionCents: platformCut,
             driverPayoutCents: driverCut,
           };
-        }
-
-        const existingRideFinalizeDebit = await tx.transaction.findUnique({
-          where: { referenceId: refRideFinalizeDebit },
-          select: { id: true },
-        });
-        if (existingRideFinalizeDebit !== null) {
-          throw new SafeTaxiInvalidStateError(
-            "Przejazd został już rozliczony przez endpoint integracyjny.",
-          );
         }
 
         const existing = await tx.transaction.findUnique({
