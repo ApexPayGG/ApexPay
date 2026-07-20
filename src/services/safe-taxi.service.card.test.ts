@@ -10,7 +10,9 @@ import {
 } from "./safe-taxi.service.js";
 
 describe("SafeTaxiService.settleRide — legacy ride-finalize protection", () => {
-  it("odrzuca ponowne rozliczenie, gdy istnieje trwały debit z endpointu ride-finalize", async () => {
+  it.each([RidePaymentMethod.CARD, RidePaymentMethod.CASH])(
+    "odrzuca ponowne rozliczenie %s, gdy istnieje trwała wypłata z endpointu ride-finalize",
+    async (paymentMethod) => {
     vi.stubEnv("SAFE_TAXI_PLATFORM_USER_ID", "user_platform");
     vi.stubEnv("SAFE_TAXI_PLATFORM_COMMISSION_BPS", "1500");
 
@@ -20,7 +22,7 @@ describe("SafeTaxiService.settleRide — legacy ride-finalize protection", () =>
           id: "ride_legacy_finalize",
           passengerId: "user_pass",
           driverId: "user_driver",
-          paymentMethod: RidePaymentMethod.CARD,
+          paymentMethod,
           status: SafeTaxiRideStatus.CREATED,
           fareCents: null,
           platformCommissionCents: null,
@@ -34,8 +36,8 @@ describe("SafeTaxiService.settleRide — legacy ride-finalize protection", () =>
         findUnique: vi.fn().mockImplementation(
           (args: { where: { referenceId: string } }) =>
             Promise.resolve(
-              args.where.referenceId === "ride:ride_legacy_finalize:debit"
-                ? { id: "legacy_debit" }
+              args.where.referenceId === "ride:ride_legacy_finalize:driver"
+                ? { id: "legacy_driver_payout" }
                 : null,
             ),
         ),
@@ -59,5 +61,6 @@ describe("SafeTaxiService.settleRide — legacy ride-finalize protection", () =>
     expect(tx.wallet.update).not.toHaveBeenCalled();
     expect(tx.transaction.create).not.toHaveBeenCalled();
     vi.unstubAllEnvs();
-  });
+    },
+  );
 });
