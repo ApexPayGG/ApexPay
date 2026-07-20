@@ -196,6 +196,7 @@ export class SafeTaxiService {
     );
 
     const refPassenger = `stx:${rideId}:passenger`;
+    const refRideFinalizePayout = `ride:${rideId}:driver`;
     const refCashCommission = `stx:${rideId}:commission_cash`;
     const refCashCommissionPlatform = `stx:${rideId}:commission_cash:platform`;
 
@@ -216,6 +217,16 @@ export class SafeTaxiService {
         }
         if (ride.status !== SafeTaxiRideStatus.CREATED) {
           throw new SafeTaxiInvalidStateError("Przejazd nie oczekuje na rozliczenie.");
+        }
+
+        const existingRideFinalizePayout = await tx.transaction.findUnique({
+          where: { referenceId: refRideFinalizePayout },
+          select: { id: true },
+        });
+        if (existingRideFinalizePayout !== null) {
+          throw new SafeTaxiInvalidStateError(
+            "Przejazd został już rozliczony przez endpoint integracyjny.",
+          );
         }
 
         if (ride.paymentMethod === RidePaymentMethod.CASH) {
@@ -351,16 +362,15 @@ export class SafeTaxiService {
           throw new WalletNotFoundError();
         }
 
-        try {
-          await tx.wallet.update({
-            where: { userId: ride.passengerId },
-            data: { balance: { decrement: fareCents } },
-          });
-        } catch (err) {
-          if (isInsufficientFundsDbError(err)) {
-            throw new InsufficientFundsError();
-          }
-          throw err;
+        const debited = await tx.wallet.updateMany({
+          where: {
+            userId: ride.passengerId,
+            balance: { gte: fareCents },
+          },
+          data: { balance: { decrement: fareCents } },
+        });
+        if (debited.count !== 1) {
+          throw new InsufficientFundsError();
         }
 
         await tx.wallet.update({
