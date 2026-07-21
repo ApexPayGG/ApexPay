@@ -45,7 +45,7 @@ describe("PSP webhook infrastructure failures", () => {
     });
 
     expect(response.status).toBe(500);
-    expect(response.body).toMatchObject({ code: "INTERNAL" });
+    expect(response.body).toMatchObject({ code: "INTERNAL_ERROR" });
   });
 
   it("forwards dispute processing failures to the global error handler", async () => {
@@ -68,6 +68,6 @@ describe("PSP webhook infrastructure failures", () => {
     });
 
     expect(response.status).toBe(500);
-    expect(response.body).toMatchObject({ code: "INTERNAL" });
+    expect(response.body).toMatchObject({ code: "INTERNAL_ERROR" });
   });
 });
