@@ -284,16 +284,12 @@ export function createApp(options: CreateAppOptions): {
   app.post(
     "/internal/webhooks/psp-deposit",
     pspDepositWebhookHmac,
-    (req, res) => {
-      void pspDepositWebhookController.handle(req, res);
-    },
+    (req, res) => pspDepositWebhookController.handle(req, res),
   );
   app.post(
     "/internal/webhooks/psp-dispute",
     pspDepositWebhookHmac,
-    (req, res) => {
-      void pspDisputeWebhookController.handle(req, res);
-    },
+    (req, res) => pspDisputeWebhookController.handle(req, res),
   );
   app.post(
     "/internal/webhooks/autopay-itn",
