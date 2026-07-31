@@ -372,7 +372,10 @@ export class RefundService {
       const out = await this.prisma.$transaction(
         async (tx) => {
           const refundId = randomUUID();
-          const platformUserId = getMarketplacePlatformUserId();
+          // Marketplace "platform" fee (`mkt:{id}:credit:platform`) is credited to the
+          // integrator at charge time — never to APEXPAY_PLATFORM_USER_ID. Clawbacks for
+          // coveredBy PLATFORM / SPLIT platformCents must debit that same integrator wallet.
+          const feeRecipientUserId = charge.integratorUserId;
 
           const payerWallet = await tx.wallet.findUnique({
             where: { userId: payerUserId },
@@ -382,11 +385,14 @@ export class RefundService {
             throw new WalletNotFoundError();
           }
 
-          const platformWallet = await tx.wallet.findUnique({
-            where: { userId: platformUserId },
-            select: { id: true },
-          });
-          if (platformWallet === null) {
+          const feeRecipientWallet =
+            feeRecipientUserId === payerUserId
+              ? payerWallet
+              : await tx.wallet.findUnique({
+                  where: { userId: feeRecipientUserId },
+                  select: { id: true },
+                });
+          if (feeRecipientWallet === null) {
             throw new WalletNotFoundError();
           }
 
@@ -446,7 +452,7 @@ export class RefundService {
 
           if (params.coveredBy === RefundCoveredBy.PLATFORM) {
             await applyDebit(
-              platformWallet.id,
+              feeRecipientWallet.id,
               refundAmount,
               `ref:${refundId}:debit:platform`,
             );
@@ -489,7 +495,7 @@ export class RefundService {
 
             if (platformDebit > 0n) {
               await applyDebit(
-                platformWallet.id,
+                feeRecipientWallet.id,
                 platformDebit,
                 `ref:${refundId}:debit:platform`,
               );
