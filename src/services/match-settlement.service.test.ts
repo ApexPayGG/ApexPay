@@ -134,6 +134,7 @@ describe("MatchSettlementService", () => {
       status: "DISPUTED",
       awardsTournamentPrize: true,
       tournament: {
+        status: "IN_PROGRESS",
         entryFee: 100n,
         participants: [{ userId: "a" }, { userId: "b" }],
         organizer: {
@@ -182,6 +183,7 @@ describe("MatchSettlementService", () => {
       status: "DISPUTED",
       awardsTournamentPrize: false,
       tournament: {
+        status: "IN_PROGRESS",
         entryFee: 100n,
         participants: [{ userId: "a" }, { userId: "b" }],
         organizer: {
@@ -203,6 +205,41 @@ describe("MatchSettlementService", () => {
     expect(bracketHoist.advanceAfterTerminalMatch).toHaveBeenCalled();
   });
 
+  it("throws TOURNAMENT_NOT_ACTIVE when tournament is CANCELED (no prize mint after refund)", async () => {
+    txMocks = createTxMock();
+    (prisma as unknown as { $transaction: typeof vi.fn }).$transaction = vi.fn(
+      async (fn: (t: (typeof txMocks)["tx"]) => Promise<unknown>) =>
+        fn(txMocks.tx),
+    );
+
+    txMocks.matchFindUnique.mockResolvedValue({
+      id: "m1",
+      tournamentId: "t1",
+      status: "DISPUTED",
+      awardsTournamentPrize: true,
+      tournament: {
+        status: "CANCELED",
+        entryFee: 100n,
+        participants: [{ userId: "a" }, { userId: "b" }],
+        organizer: {
+          id: "org1",
+          wallet: { id: "wal-o", userId: "org1" },
+        },
+      },
+    });
+
+    await expect(
+      settlement.settleDisputedMatch({
+        matchId: "m1",
+        finalWinnerId: "w1",
+      }),
+    ).rejects.toMatchObject({ code: "TOURNAMENT_NOT_ACTIVE" });
+
+    expect(txMocks.walletUpdate).not.toHaveBeenCalled();
+    expect(txMocks.matchUpdate).not.toHaveBeenCalled();
+    expect(bracketHoist.advanceAfterTerminalMatch).not.toHaveBeenCalled();
+  });
+
   it("retries on P2034 deadlock code", async () => {
     let calls = 0;
     const prismaTransaction = vi.fn(
@@ -222,6 +259,7 @@ describe("MatchSettlementService", () => {
           status: "DISPUTED",
           awardsTournamentPrize: true,
           tournament: {
+            status: "IN_PROGRESS",
             entryFee: 100n,
             participants: [{ userId: "a" }, { userId: "b" }],
             organizer: {
