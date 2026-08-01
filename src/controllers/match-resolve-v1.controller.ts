@@ -72,7 +72,8 @@ export class MatchResolveV1Controller {
         }
         if (
           error.code === "MATCH_ALREADY_SETTLED" ||
-          error.code === "MATCH_NOT_DISPUTED"
+          error.code === "MATCH_NOT_DISPUTED" ||
+          error.code === "TOURNAMENT_NOT_ACTIVE"
         ) {
           res.status(409).json({ error: "Mecz nie może być rozliczony w tym stanie." });
           return;

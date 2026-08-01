@@ -506,10 +506,9 @@ export class TournamentController {
           if (tournament.organizerId !== uid) {
             throw new Error("FORBIDDEN_NOT_ORGANIZER");
           }
-          if (
-            tournament.status === "COMPLETED" ||
-            tournament.status === "CANCELED"
-          ) {
+          // Only REGISTRATION: cancel after start would refund escrow while
+          // PENDING prize matches remain settleable (money mint).
+          if (tournament.status !== "REGISTRATION") {
             throw new Error("INVALID_STATE_FOR_REFUND");
           }
 

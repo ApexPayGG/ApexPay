@@ -92,6 +92,10 @@ export class MatchSettlementService {
             }
 
             const t = match.tournament;
+            if (t.status !== "IN_PROGRESS") {
+              throw new MatchSettlementError("TOURNAMENT_NOT_ACTIVE");
+            }
+
             const participantsCount = BigInt(t.participants.length);
             const totalPool = t.entryFee * participantsCount;
             const platformTotalFee =

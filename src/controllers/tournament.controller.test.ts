@@ -621,6 +621,26 @@ describe("TournamentController.cancelAndRefund", () => {
     errSpy.mockRestore();
   });
 
+  it("returns 409 when tournament is IN_PROGRESS (prevents refund-then-prize mint)", async () => {
+    h.tournamentFindUnique.mockResolvedValue({
+      ...cancellableTournament("org"),
+      status: "IN_PROGRESS",
+    });
+    const controller = new TournamentController();
+    const res = createMockResponse();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await controller.cancelAndRefund(
+      { params: { id: "tn1" }, user: { id: "org" } } as MockRequest as never,
+      res as never,
+    );
+
+    expect(h.walletUpdate).not.toHaveBeenCalled();
+    expect(h.tournamentUpdate).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(409);
+    errSpy.mockRestore();
+  });
+
   it("returns 200 and refunds participants", async () => {
     h.tournamentFindUnique.mockResolvedValue(cancellableTournament("org"));
     h.walletUpdate.mockResolvedValue({});

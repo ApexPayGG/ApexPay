@@ -241,6 +241,13 @@ export class MatchController {
         return;
       }
 
+      if (msg === "TOURNAMENT_NOT_ACTIVE") {
+        res.status(409).json({
+          error: "Turniej nie jest aktywny — rozliczenie nagrody niemożliwe.",
+        });
+        return;
+      }
+
       res.status(500).json({
         error: "Wewnętrzny błąd silnika konsensusu.",
       });
@@ -342,6 +349,13 @@ export class MatchController {
       if (msg === "WINNER_NOT_IN_MATCH") {
         res.status(400).json({
           error: "Zwycięzca musi być jednym z graczy tego meczu.",
+        });
+        return;
+      }
+
+      if (msg === "TOURNAMENT_NOT_ACTIVE") {
+        res.status(409).json({
+          error: "Turniej nie jest aktywny — rozliczenie nagrody niemożliwe.",
         });
         return;
       }

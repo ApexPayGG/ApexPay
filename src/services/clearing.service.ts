@@ -36,6 +36,10 @@ export class ClearingService {
     }
 
     const t = match.tournament;
+    if (t.status !== "IN_PROGRESS") {
+      throw new Error("TOURNAMENT_NOT_ACTIVE");
+    }
+
     const participantsCount = BigInt(t.participants.length);
     const totalPool = t.entryFee * participantsCount;
 
