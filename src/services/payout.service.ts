@@ -299,7 +299,20 @@ export class PayoutService {
     const redisKey = `${PAYOUT_IDEMP_REDIS_PREFIX}${idem}`;
     const setOk = await params.redis.set(redisKey, "1", "EX", 86_400, "NX");
     if (setOk !== "OK") {
+      const replay = await this.prisma.payout.findUnique({
+        where: { idempotencyKey: idem },
+      });
+      if (replay !== null) {
+        return { payout: replay };
+      }
       throw new IdempotencyConflictError();
+    }
+
+    const existingDurable = await this.prisma.payout.findUnique({
+      where: { idempotencyKey: idem },
+    });
+    if (existingDurable !== null) {
+      return { payout: existingDurable };
     }
 
     const startedAt = performance.now();
@@ -395,6 +408,13 @@ export class PayoutService {
     try {
       const created = await this.prisma.$transaction(
         async (tx) => {
+          const dup = await tx.payout.findUnique({
+            where: { idempotencyKey: idem },
+          });
+          if (dup !== null) {
+            return { row: dup, webhookOutboxId: null as string | null };
+          }
+
           try {
             await tx.wallet.update({
               where: { userId: subjectUserId },
@@ -422,6 +442,7 @@ export class PayoutService {
               connectedAccountId: account.id,
               amount: params.amount,
               currency,
+              idempotencyKey: idem,
               ...(fraudEval !== undefined &&
               fraudEval.status === FraudCheckStatus.FLAGGED
                 ? { fraudCheckId: fraudEval.fraudCheckId }
@@ -472,7 +493,7 @@ export class PayoutService {
             );
           }
 
-          return { row, webhookOutboxId: wo.id };
+          return { row, webhookOutboxId: wo.id as string | null };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -481,7 +502,7 @@ export class PayoutService {
         },
       );
 
-      if (this.webhookPublish !== undefined) {
+      if (created.webhookOutboxId !== null && this.webhookPublish !== undefined) {
         void this.webhookPublish(created.webhookOutboxId).catch((err: unknown) => {
           const m = err instanceof Error ? err.message : String(err);
           console.error("[WebhookPublish] payout create:", m);
@@ -498,6 +519,18 @@ export class PayoutService {
 
       return { payout: created.row };
     } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        const target = err.meta?.target;
+        if (Array.isArray(target) && target.includes("idempotencyKey")) {
+          const raced = await this.prisma.payout.findUnique({
+            where: { idempotencyKey: idem },
+          });
+          if (raced !== null) {
+            return { payout: raced };
+          }
+          throw new IdempotencyConflictError();
+        }
+      }
       contextLogger().error(
         {
           error: err instanceof Error ? err.message : String(err),
