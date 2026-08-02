@@ -20,9 +20,11 @@ describe("PayoutService.createPayout", () => {
     };
   }
 
-  it("rzuca IdempotencyConflictError gdy Redis SET NX nie ustawi klucza", async () => {
+  it("rzuca IdempotencyConflictError gdy Redis SET NX nie ustawi klucza i brak wpisu w DB", async () => {
     const redis = buildRedis({ setReturnsOk: false });
-    const prisma = {} as PrismaClient;
+    const prisma = {
+      payout: { findUnique: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaClient;
     const service = new PayoutService(prisma);
     await expect(
       service.createPayout({
@@ -42,6 +44,85 @@ describe("PayoutService.createPayout", () => {
     );
   });
 
+  it("po wygaśnięciu Redis zwraca istniejącą wypłatę z DB bez ponownego debitu (durable idempotency)", async () => {
+    const redis = buildRedis({ setReturnsOk: true });
+    const existingPayout = {
+      id: "payout_existing_1",
+      connectedAccountId: accountId,
+      amount: 100n,
+      currency: "PLN",
+      status: "PENDING",
+      pspReferenceId: null,
+      fraudCheckId: null,
+      idempotencyKey: "idem-durable-1",
+      createdAt: new Date("2026-07-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+    };
+    const findUniquePayout = vi.fn().mockResolvedValue(existingPayout);
+    const walletUpdate = vi.fn();
+    const prisma = {
+      payout: { findUnique: findUniquePayout },
+      connectedAccount: { findUnique: vi.fn() },
+      wallet: { findUnique: vi.fn() },
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          payout: { findUnique: findUniquePayout, create: vi.fn() },
+          wallet: { update: walletUpdate, findUnique: vi.fn() },
+          transaction: { create: vi.fn() },
+          webhookOutbox: { create: vi.fn() },
+        };
+        return fn(tx);
+      }),
+    } as unknown as PrismaClient;
+    const service = new PayoutService(prisma);
+
+    const result = await service.createPayout({
+      redis: redis as never,
+      integratorUserId,
+      idempotencyKey: "idem-durable-1",
+      connectedAccountId: accountId,
+      amount: 100n,
+    });
+
+    expect(result.payout.id).toBe("payout_existing_1");
+    expect(findUniquePayout).toHaveBeenCalledWith({
+      where: { idempotencyKey: "idem-durable-1" },
+    });
+    expect(walletUpdate).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.connectedAccount.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("gdy Redis NX koliduje, zwraca istniejącą wypłatę z DB zamiast 409", async () => {
+    const redis = buildRedis({ setReturnsOk: false });
+    const existingPayout = {
+      id: "payout_existing_2",
+      connectedAccountId: accountId,
+      amount: 250n,
+      currency: "PLN",
+      status: "PENDING",
+      pspReferenceId: null,
+      fraudCheckId: null,
+      idempotencyKey: "idem-replay-1",
+      createdAt: new Date("2026-07-02T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-02T00:00:00.000Z"),
+    };
+    const prisma = {
+      payout: { findUnique: vi.fn().mockResolvedValue(existingPayout) },
+    } as unknown as PrismaClient;
+    const service = new PayoutService(prisma);
+
+    const result = await service.createPayout({
+      redis: redis as never,
+      integratorUserId,
+      idempotencyKey: "idem-replay-1",
+      connectedAccountId: accountId,
+      amount: 250n,
+    });
+
+    expect(result.payout.id).toBe("payout_existing_2");
+  });
+
   it("rzuca InsufficientFundsError gdy saldo portfela < amount", async () => {
     const redis = buildRedis();
     const findUniqueAccount = vi.fn().mockResolvedValue({
@@ -55,6 +136,7 @@ describe("PayoutService.createPayout", () => {
       balance: 50n,
     });
     const prisma = {
+      payout: { findUnique: vi.fn().mockResolvedValue(null) },
       connectedAccount: { findUnique: findUniqueAccount },
       wallet: { findUnique: findUniqueWallet },
       $transaction: vi.fn(),
@@ -106,6 +188,7 @@ describe("PayoutService.createPayout", () => {
     });
 
     const prisma = {
+      payout: { findUnique: vi.fn().mockResolvedValue(null) },
       connectedAccount: { findUnique: findUniqueAccount },
       wallet: { findUnique: findUniqueWallet },
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
@@ -113,11 +196,13 @@ describe("PayoutService.createPayout", () => {
           wallet: { update: vi.fn().mockResolvedValue({}) },
           transaction: { create: vi.fn().mockResolvedValue({}) },
           payout: {
+            findUnique: vi.fn().mockResolvedValue(null),
             create: vi.fn().mockResolvedValue({
               id: payoutId,
               connectedAccountId: accountId,
               amount: 100n,
               currency: "PLN",
+              idempotencyKey: "idem-outbox-queue",
             }),
           },
           webhookOutbox: {

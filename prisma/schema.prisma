@@ -298,6 +298,8 @@ model Payout {
   currency           String        @default("PLN")
   status             PayoutStatus  @default(PENDING)
   pspReferenceId     String?
+  /// Trwała idempotencja create (Redis jest tylko krótkim lockiem / hintem).
+  idempotencyKey     String?       @unique
   fraudCheckId       String?       @unique
   fraudCheck         FraudCheck?   @relation(fields: [fraudCheckId], references: [id], onDelete: SetNull)
   createdAt          DateTime      @default(now())
