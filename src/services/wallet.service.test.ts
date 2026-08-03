@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import {
+  DuplicateTransactionError,
   InsufficientFundsError,
   TransferSelfError,
   WalletNotFoundError,
@@ -350,10 +351,85 @@ describe("WalletService.transferP2P", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("returns idempotent when p2p ref out already exists", async () => {
-    lastTx.transaction.findFirst.mockResolvedValue({ id: "existing" });
+  it("returns idempotent when p2p ref out already exists for same sender/recipient/amount", async () => {
+    lastTx.transaction.findFirst
+      .mockResolvedValueOnce({
+        id: "existing-out",
+        walletId: "wf",
+        amount: -5n,
+        referenceId: "p2p:idem-1:out",
+      })
+      .mockResolvedValueOnce({
+        id: "existing-in",
+        walletId: "wt",
+        amount: 5n,
+        referenceId: "p2p:idem-1:in",
+      });
+    lastTx.wallet.findUnique
+      .mockResolvedValueOnce({ id: "wf" })
+      .mockResolvedValueOnce({ id: "wt" });
     const r = await service.transferP2P("a", "b", 5n, "idem-1");
     expect(r).toEqual({ idempotent: true });
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+    expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId is reused with different amount", async () => {
+    lastTx.transaction.findFirst.mockResolvedValueOnce({
+      id: "existing-out",
+      walletId: "wf",
+      amount: -1n,
+      referenceId: "p2p:order-123:out",
+    });
+    lastTx.wallet.findUnique
+      .mockResolvedValueOnce({ id: "wf" })
+      .mockResolvedValueOnce({ id: "wt" });
+
+    await expect(service.transferP2P("a", "merchant", 50000n, "order-123")).rejects.toBeInstanceOf(
+      DuplicateTransactionError,
+    );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+    expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId belongs to a different sender", async () => {
+    lastTx.transaction.findFirst.mockResolvedValueOnce({
+      id: "existing-out",
+      walletId: "attacker-wallet",
+      amount: -1n,
+      referenceId: "p2p:order-123:out",
+    });
+    lastTx.wallet.findUnique
+      .mockResolvedValueOnce({ id: "merchant-payer-wallet" })
+      .mockResolvedValueOnce({ id: "merchant-wallet" });
+
+    await expect(service.transferP2P("payer", "merchant", 1n, "order-123")).rejects.toBeInstanceOf(
+      DuplicateTransactionError,
+    );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId targets a different recipient", async () => {
+    lastTx.transaction.findFirst
+      .mockResolvedValueOnce({
+        id: "existing-out",
+        walletId: "wf",
+        amount: -100n,
+        referenceId: "p2p:order-123:out",
+      })
+      .mockResolvedValueOnce({
+        id: "existing-in",
+        walletId: "accomplice-wallet",
+        amount: 100n,
+        referenceId: "p2p:order-123:in",
+      });
+    lastTx.wallet.findUnique
+      .mockResolvedValueOnce({ id: "wf" })
+      .mockResolvedValueOnce({ id: "merchant-wallet" });
+
+    await expect(service.transferP2P("a", "merchant", 100n, "order-123")).rejects.toBeInstanceOf(
+      DuplicateTransactionError,
+    );
     expect(lastTx.wallet.update).not.toHaveBeenCalled();
   });
 
