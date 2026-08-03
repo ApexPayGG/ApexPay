@@ -10,7 +10,7 @@ export class InsufficientFundsError extends Error {
   }
 }
 
-/** Zarezerwowane na przyszłe przypadki (np. jawny konflikt); `processEntryFee` jest idempotentny po `referenceId`. */
+/** Konflikt `referenceId`: klucz już użyty dla innej operacji (inne parametry / inny portfel). */
 export class DuplicateTransactionError extends Error {
   constructor() {
     super("Duplicate transaction");
@@ -115,13 +115,6 @@ export class WalletService {
     const refIn = `p2p:${base}:in`;
 
     return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.transaction.findFirst({
-        where: { referenceId: refOut },
-      });
-      if (existing !== null) {
-        return { idempotent: true };
-      }
-
       const fromWallet = await tx.wallet.findUnique({
         where: { userId: fromUserId },
         select: { id: true },
@@ -132,6 +125,25 @@ export class WalletService {
       });
       if (fromWallet === null || toWallet === null) {
         throw new WalletNotFoundError();
+      }
+
+      const existingOut = await tx.transaction.findFirst({
+        where: { referenceId: refOut },
+      });
+      if (existingOut !== null) {
+        const existingIn = await tx.transaction.findFirst({
+          where: { referenceId: refIn },
+        });
+        const sameTransfer =
+          existingOut.walletId === fromWallet.id &&
+          existingOut.amount === -amount &&
+          existingIn !== null &&
+          existingIn.walletId === toWallet.id &&
+          existingIn.amount === amount;
+        if (!sameTransfer) {
+          throw new DuplicateTransactionError();
+        }
+        return { idempotent: true };
       }
 
       try {

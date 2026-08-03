@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import type { Transaction } from "@prisma/client";
 import type { WalletService } from "../services/wallet.service.js";
 import {
+  DuplicateTransactionError,
   InsufficientFundsError,
   TransferSelfError,
   WalletNotFoundError,
@@ -105,6 +106,13 @@ export class WalletController {
     } catch (err) {
       if (err instanceof TransferSelfError) {
         res.status(400).json({ error: "Nie można przelać na to samo konto.", code: "BAD_REQUEST" });
+        return;
+      }
+      if (err instanceof DuplicateTransactionError) {
+        res.status(409).json({
+          error: "referenceId conflict — already used for a different transfer.",
+          code: "CONFLICT",
+        });
         return;
       }
       if (err instanceof WalletNotFoundError) {

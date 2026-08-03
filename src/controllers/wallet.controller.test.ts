@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WalletService } from "../services/wallet.service.js";
 import {
+  DuplicateTransactionError,
   InsufficientFundsError,
   TransferSelfError,
   WalletNotFoundError,
@@ -415,6 +416,24 @@ describe("WalletController.transfer", () => {
     expect(res.json).toHaveBeenCalledWith({
       message: "Transakcja już wcześniej zaksięgowana (idempotentność).",
       idempotent: true,
+    });
+  });
+
+  it("returns 409 when referenceId conflicts with a different transfer", async () => {
+    mockTransferP2P.mockRejectedValue(new DuplicateTransactionError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.transfer(
+      {
+        user: { id: "a" },
+        body: { toUserId: "merchant", amount: "50000", referenceId: "order-123" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "referenceId conflict — already used for a different transfer.",
+      code: "CONFLICT",
     });
   });
 
