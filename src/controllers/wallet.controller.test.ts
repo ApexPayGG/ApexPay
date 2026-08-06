@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WalletService } from "../services/wallet.service.js";
 import {
+  DuplicateTransactionError,
   InsufficientFundsError,
   TransferSelfError,
   WalletNotFoundError,
@@ -150,6 +151,24 @@ describe("WalletController.chargeEntryFee", () => {
     expect(res.status).toHaveBeenCalledWith(402);
     expect(res.json).toHaveBeenCalled();
   });
+
+  it("returns 409 when referenceId conflicts with a different charge", async () => {
+    mockProcessEntryFee.mockRejectedValue(new DuplicateTransactionError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.chargeEntryFee(
+      {
+        user: { id: "usr_victim" },
+        body: { amount: "50000", referenceId: "match-lobby-shared" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "referenceId conflict — already used for a different charge.",
+      code: "CONFLICT",
+    });
+  });
 });
 
 type DepositBody = {
@@ -242,6 +261,24 @@ describe("WalletController.deposit", () => {
     );
     const payload = res.json.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(typeof payload?.amount).toBe("string");
+  });
+
+  it("returns 409 when referenceId conflicts with a different deposit", async () => {
+    mockDepositFunds.mockRejectedValue(new DuplicateTransactionError());
+    const controller = createController();
+    const res = createMockResponse();
+    await controller.deposit(
+      {
+        user: { id: "usr_from_jwt" },
+        body: { amount: "10000", referenceId: "stripe-ch_abc" },
+      } as never,
+      res as never,
+    );
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "referenceId conflict — already used for a different deposit.",
+      code: "CONFLICT",
+    });
   });
 });
 

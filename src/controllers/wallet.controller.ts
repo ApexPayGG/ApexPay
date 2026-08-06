@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import type { Transaction } from "@prisma/client";
 import type { WalletService } from "../services/wallet.service.js";
 import {
+  DuplicateTransactionError,
   InsufficientFundsError,
   TransferSelfError,
   WalletNotFoundError,
@@ -205,6 +206,17 @@ export class WalletController {
       );
       res.status(200).json(this.transactionToJsonDto(txn));
     } catch (err) {
+      if (err instanceof DuplicateTransactionError) {
+        res.status(409).json({
+          error: "referenceId conflict — already used for a different deposit.",
+          code: "CONFLICT",
+        });
+        return;
+      }
+      if (err instanceof WalletNotFoundError) {
+        res.status(404).json({ error: "Wallet not found" });
+        return;
+      }
       if (err instanceof RangeError) {
         res.status(400).json({ error: "Bad Request", message: err.message });
         return;
@@ -249,6 +261,17 @@ export class WalletController {
 
       res.status(200).json(this.transactionToJsonDto(txn));
     } catch (err) {
+      if (err instanceof DuplicateTransactionError) {
+        res.status(409).json({
+          error: "referenceId conflict — already used for a different charge.",
+          code: "CONFLICT",
+        });
+        return;
+      }
+      if (err instanceof WalletNotFoundError) {
+        res.status(404).json({ error: "Wallet not found" });
+        return;
+      }
       if (err instanceof InsufficientFundsError) {
         res.status(402).json({ error: "Payment Required", message: err.message });
         return;
