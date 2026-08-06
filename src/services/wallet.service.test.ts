@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import {
+  DuplicateTransactionError,
   InsufficientFundsError,
   TransferSelfError,
   WalletNotFoundError,
@@ -56,6 +57,7 @@ describe("WalletService.processEntryFee", () => {
     const referenceId = "match-lobby-7";
 
     lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_1" });
     lastTx.wallet.update.mockResolvedValue({ id: "wal_1" });
     const created = {
       id: "txn_1",
@@ -96,6 +98,7 @@ describe("WalletService.processEntryFee", () => {
     const referenceId = "match-lobby-8";
 
     lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_2" });
     lastTx.wallet.update.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError(
         'Check constraint "wallet_balance_check" violated',
@@ -113,7 +116,7 @@ describe("WalletService.processEntryFee", () => {
     expect(lastTx.transaction.create).not.toHaveBeenCalled();
   });
 
-  it("returns existing Transaction when referenceId already exists (idempotent success)", async () => {
+  it("returns existing Transaction when referenceId already exists for same wallet and amount", async () => {
     const userId = "usr_3";
     const amount = 10n;
     const referenceId = "idem-001";
@@ -125,6 +128,7 @@ describe("WalletService.processEntryFee", () => {
       amount: -amount,
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_3" });
     lastTx.transaction.findFirst.mockResolvedValue(existing);
 
     const result = await service.processEntryFee(userId, amount, referenceId);
@@ -132,6 +136,47 @@ describe("WalletService.processEntryFee", () => {
     expect(result).toEqual(existing);
     expect(lastTx.wallet.update).not.toHaveBeenCalled();
     expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId is reused with different amount", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_victim" });
+    lastTx.transaction.findFirst.mockResolvedValue({
+      id: "existing_txn",
+      referenceId: "match-lobby-shared",
+      walletId: "wal_victim",
+      amount: -1n,
+    });
+
+    await expect(
+      service.processEntryFee("usr_victim", 50000n, "match-lobby-shared"),
+    ).rejects.toBeInstanceOf(DuplicateTransactionError);
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+    expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId belongs to a different wallet", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_victim" });
+    lastTx.transaction.findFirst.mockResolvedValue({
+      id: "existing_txn",
+      referenceId: "match-lobby-shared",
+      walletId: "wal_attacker",
+      amount: -50000n,
+    });
+
+    await expect(
+      service.processEntryFee("usr_victim", 50000n, "match-lobby-shared"),
+    ).rejects.toBeInstanceOf(DuplicateTransactionError);
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+  });
+
+  it("throws WalletNotFoundError when payer has no wallet", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue(null);
+
+    await expect(service.processEntryFee("missing", 10n, "fee-1")).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+    expect(lastTx.transaction.findFirst).not.toHaveBeenCalled();
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
   });
 });
 
@@ -156,6 +201,7 @@ describe("WalletService.depositFunds", () => {
     const referenceId = "stripe-in-001";
 
     lastTx.transaction.findFirst.mockResolvedValue(null);
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_dep_1" });
     lastTx.wallet.update.mockResolvedValue({ id: "wal_dep_1" });
     const created = {
       id: "txn_dep_1",
@@ -199,7 +245,7 @@ describe("WalletService.depositFunds", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("returns existing Transaction for referenceId without wallet.update or transaction.create (idempotent)", async () => {
+  it("returns existing Transaction for same wallet and amount without mutating (idempotent)", async () => {
     const userId = "usr_dep_2";
     const amount = 100n;
     const referenceId = "idem-deposit-1";
@@ -212,6 +258,7 @@ describe("WalletService.depositFunds", () => {
       type: "DEPOSIT",
       createdAt: new Date("2026-01-02T00:00:00.000Z"),
     };
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_dep_2" });
     lastTx.transaction.findFirst.mockResolvedValue(existing);
 
     const result = await service.depositFunds(userId, amount, referenceId);
@@ -219,6 +266,38 @@ describe("WalletService.depositFunds", () => {
     expect(result).toEqual({ transaction: existing, created: false });
     expect(lastTx.wallet.update).not.toHaveBeenCalled();
     expect(lastTx.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId is reused with different amount", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_dep_2" });
+    lastTx.transaction.findFirst.mockResolvedValue({
+      id: "existing_dep_txn",
+      referenceId: "idem-deposit-1",
+      walletId: "wal_dep_2",
+      amount: 1n,
+      type: "DEPOSIT",
+    });
+
+    await expect(service.depositFunds("usr_dep_2", 10000n, "idem-deposit-1")).rejects.toBeInstanceOf(
+      DuplicateTransactionError,
+    );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when same referenceId belongs to a different wallet", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_other" });
+    lastTx.transaction.findFirst.mockResolvedValue({
+      id: "existing_dep_txn",
+      referenceId: "idem-deposit-1",
+      walletId: "wal_dep_2",
+      amount: 100n,
+      type: "DEPOSIT",
+    });
+
+    await expect(service.depositFunds("usr_other", 100n, "idem-deposit-1")).rejects.toBeInstanceOf(
+      DuplicateTransactionError,
+    );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
   });
 });
 
@@ -274,6 +353,39 @@ describe("WalletService.depositFundsPspWebhook", () => {
     await expect(service.depositFundsPspWebhook("missing", 1n, "r1")).rejects.toBeInstanceOf(
       WalletNotFoundError,
     );
+  });
+
+  it("returns existing DEPOSIT when dep:{pspRefId} matches same wallet and amount", async () => {
+    const existing = {
+      id: "txn_existing",
+      walletId: "wal_1",
+      amount: 100n,
+      referenceId: "dep:ref_psp_1",
+      type: "DEPOSIT",
+    };
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_1" });
+    lastTx.transaction.findFirst.mockResolvedValue(existing);
+
+    const result = await service.depositFundsPspWebhook("usr_x", 100n, "ref_psp_1");
+
+    expect(result).toEqual({ transaction: existing, created: false });
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
+  });
+
+  it("throws DuplicateTransactionError when dep:{pspRefId} exists with different amount", async () => {
+    lastTx.wallet.findUnique.mockResolvedValue({ id: "wal_1" });
+    lastTx.transaction.findFirst.mockResolvedValue({
+      id: "txn_existing",
+      walletId: "wal_1",
+      amount: 1n,
+      referenceId: "dep:ref_psp_1",
+      type: "DEPOSIT",
+    });
+
+    await expect(service.depositFundsPspWebhook("usr_x", 100n, "ref_psp_1")).rejects.toBeInstanceOf(
+      DuplicateTransactionError,
+    );
+    expect(lastTx.wallet.update).not.toHaveBeenCalled();
   });
 });
 

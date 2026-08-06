@@ -10,7 +10,7 @@ export class InsufficientFundsError extends Error {
   }
 }
 
-/** Zarezerwowane na przyszłe przypadki (np. jawny konflikt); `processEntryFee` jest idempotentny po `referenceId`. */
+/** Konflikt `referenceId`: klucz już użyty dla innej operacji (inne parametry / inny portfel). */
 export class DuplicateTransactionError extends Error {
   constructor() {
     super("Duplicate transaction");
@@ -216,14 +216,27 @@ export class WalletService {
     }
 
     return await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      if (wallet === null) {
+        throw new WalletNotFoundError();
+      }
+
       const existing = await tx.transaction.findFirst({
         where: { referenceId },
       });
       if (existing !== null) {
+        const sameDeposit =
+          existing.walletId === wallet.id && existing.amount === amount;
+        if (!sameDeposit) {
+          throw new DuplicateTransactionError();
+        }
         return { transaction: existing, created: false };
       }
 
-      const wallet = await tx.wallet.update({
+      await tx.wallet.update({
         where: { userId },
         data: { balance: { increment: amount } },
         select: { id: true },
@@ -261,19 +274,24 @@ export class WalletService {
 
     return this.prisma.$transaction(
       async (tx) => {
-        const existing = await tx.transaction.findFirst({
-          where: { referenceId },
-        });
-        if (existing !== null) {
-          return { transaction: existing, created: false };
-        }
-
         const wallet = await tx.wallet.findUnique({
           where: { userId },
           select: { id: true },
         });
         if (wallet === null) {
           throw new WalletNotFoundError();
+        }
+
+        const existing = await tx.transaction.findFirst({
+          where: { referenceId },
+        });
+        if (existing !== null) {
+          const sameDeposit =
+            existing.walletId === wallet.id && existing.amount === amount;
+          if (!sameDeposit) {
+            throw new DuplicateTransactionError();
+          }
+          return { transaction: existing, created: false };
         }
 
         await tx.wallet.update({
@@ -309,21 +327,32 @@ export class WalletService {
     }
 
     return await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      if (wallet === null) {
+        throw new WalletNotFoundError();
+      }
+
       const existing = await tx.transaction.findFirst({
         where: { referenceId },
       });
       if (existing !== null) {
+        const sameCharge =
+          existing.walletId === wallet.id && existing.amount === -amount;
+        if (!sameCharge) {
+          throw new DuplicateTransactionError();
+        }
         return existing;
       }
 
-      let walletId: string;
       try {
-        const updated = await tx.wallet.update({
+        await tx.wallet.update({
           where: { userId },
           data: { balance: { decrement: amount } },
           select: { id: true },
         });
-        walletId = updated.id;
       } catch (err) {
         if (isInsufficientFundsDbError(err)) {
           throw new InsufficientFundsError();
@@ -333,7 +362,7 @@ export class WalletService {
 
       return await tx.transaction.create({
         data: {
-          walletId,
+          walletId: wallet.id,
           amount: -amount,
           referenceId,
           type: TxType.FEE,
