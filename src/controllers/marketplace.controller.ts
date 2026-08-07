@@ -3,6 +3,7 @@ import { ConnectedAccountStatus } from "@prisma/client";
 import {
   ConnectedAccountInactiveError,
   ConnectedAccountNotFoundError,
+  IdempotencyConflictError,
   MarketplaceChargeService,
   type SplitLine,
   MarketplaceValidationError,
@@ -152,6 +153,10 @@ export class MarketplaceController {
     } catch (err) {
       if (err instanceof MarketplaceValidationError) {
         res.status(400).json({ error: err.message });
+        return;
+      }
+      if (err instanceof IdempotencyConflictError) {
+        res.status(409).json({ error: err.message, code: "CONFLICT" });
         return;
       }
       if (err instanceof ConnectedAccountNotFoundError) {

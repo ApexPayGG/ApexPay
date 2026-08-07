@@ -32,6 +32,7 @@ describe("MarketplaceChargeService — audyt po createIntegrationCharge", () => 
     });
 
     const prisma = {
+      marketplaceCharge: { findUnique: vi.fn().mockResolvedValue(null) },
       connectedAccount: { findMany: vi.fn().mockResolvedValue([]) },
       $transaction: vi.fn(
         async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
