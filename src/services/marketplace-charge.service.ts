@@ -90,6 +90,29 @@ export class IdempotencyConflictError extends Error {
   }
 }
 
+/** Idempotent replay only when money-critical fields match; else conflict. */
+function assertMarketplaceChargeIdempotencyMatch(
+  existing: Pick<
+    MarketplaceCharge,
+    "integratorUserId" | "debitUserId" | "amountCents" | "currency"
+  >,
+  expected: {
+    integratorUserId: string;
+    debitUserId: string;
+    amountCents: bigint;
+    currency: string;
+  },
+): void {
+  if (
+    existing.integratorUserId !== expected.integratorUserId ||
+    existing.debitUserId !== expected.debitUserId ||
+    existing.amountCents !== expected.amountCents ||
+    existing.currency.toUpperCase() !== expected.currency.toUpperCase()
+  ) {
+    throw new IdempotencyConflictError();
+  }
+}
+
 export class PaymentMethodNotOwnedError extends Error {
   constructor() {
     super("Metoda płatności nie istnieje lub nie należy do integratora.");
@@ -225,10 +248,39 @@ export class MarketplaceChargeService {
       throw new MarketplaceValidationError("amount musi być > 0.");
     }
 
+    const currency =
+      params.currency.trim().toUpperCase() || "PLN";
+    const replayExpected = {
+      integratorUserId: params.integratorUserId,
+      debitUserId: params.integratorUserId,
+      amountCents: params.amountCents,
+      currency,
+    };
+
     const redisKey = `${INTEGRATION_CHARGE_IDEMP_REDIS_PREFIX}${idem}`;
     const setOk = await params.redis.set(redisKey, "1", "EX", 86_400, "NX");
     if (setOk !== "OK") {
+      const replay = await this.prisma.marketplaceCharge.findUnique({
+        where: { idempotencyKey: idem },
+      });
+      if (replay !== null) {
+        assertMarketplaceChargeIdempotencyMatch(replay, replayExpected);
+        return { charge: replay };
+      }
       throw new IdempotencyConflictError();
+    }
+
+    const existingDurable = await this.prisma.marketplaceCharge.findUnique({
+      where: { idempotencyKey: idem },
+    });
+    if (existingDurable !== null) {
+      try {
+        assertMarketplaceChargeIdempotencyMatch(existingDurable, replayExpected);
+      } catch (err) {
+        await params.redis.del(redisKey);
+        throw err;
+      }
+      return { charge: existingDurable };
     }
 
     const startedAt = performance.now();
@@ -236,7 +288,7 @@ export class MarketplaceChargeService {
       {
         integratorUserId: params.integratorUserId,
         amountCents: params.amountCents.toString(),
-        currency: params.currency,
+        currency,
       },
       "Marketplace charge: create started",
     );
@@ -301,7 +353,7 @@ export class MarketplaceChargeService {
       fraudEval = await this.fraudDetectionService.evaluate({
         userId: params.integratorUserId,
         amount: params.amountCents,
-        currency: params.currency,
+        currency,
         entityType: "MarketplaceCharge",
         prisma: this.prisma,
         ipAddress: clientIpFromRequest(params.request),
@@ -366,7 +418,7 @@ export class MarketplaceChargeService {
               debitUserId: params.integratorUserId,
               integratorUserId: params.integratorUserId,
               amountCents: params.amountCents,
-              currency: params.currency.trim().toUpperCase() || "PLN",
+              currency,
               idempotencyKey: idem,
               ...(fraudEval !== undefined &&
               fraudEval.status === FraudCheckStatus.FLAGGED
@@ -516,6 +568,13 @@ export class MarketplaceChargeService {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         const target = err.meta?.target;
         if (Array.isArray(target) && target.includes("idempotencyKey")) {
+          const raced = await this.prisma.marketplaceCharge.findUnique({
+            where: { idempotencyKey: idem },
+          });
+          if (raced !== null) {
+            assertMarketplaceChargeIdempotencyMatch(raced, replayExpected);
+            return { charge: raced };
+          }
           throw new IdempotencyConflictError();
         }
       }
@@ -601,9 +660,21 @@ export class MarketplaceChargeService {
     if (idem !== undefined && idem.length > 0) {
       const existing = await this.prisma.marketplaceCharge.findUnique({
         where: { idempotencyKey: idem },
-        select: { id: true },
+        select: {
+          id: true,
+          debitUserId: true,
+          integratorUserId: true,
+          amountCents: true,
+          currency: true,
+        },
       });
       if (existing !== null) {
+        assertMarketplaceChargeIdempotencyMatch(existing, {
+          integratorUserId: debitUserId,
+          debitUserId,
+          amountCents,
+          currency: "PLN",
+        });
         return { chargeId: existing.id, idempotent: true };
       }
     }
@@ -636,9 +707,21 @@ export class MarketplaceChargeService {
         if (idem !== undefined && idem.length > 0) {
           const dup = await tx.marketplaceCharge.findUnique({
             where: { idempotencyKey: idem },
-            select: { id: true },
+            select: {
+              id: true,
+              debitUserId: true,
+              integratorUserId: true,
+              amountCents: true,
+              currency: true,
+            },
           });
           if (dup !== null) {
+            assertMarketplaceChargeIdempotencyMatch(dup, {
+              integratorUserId: debitUserId,
+              debitUserId,
+              amountCents,
+              currency: "PLN",
+            });
             return { chargeId: dup.id, idempotent: true };
           }
         }
