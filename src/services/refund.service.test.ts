@@ -131,12 +131,15 @@ describe("validateRefundEligibility", () => {
 });
 
 describe("RefundService.createRefund — idempotencja Redis", () => {
-  it("gdy SET NX nie ustawi klucza → IdempotencyConflictError (bez del Redis)", async () => {
+  it("gdy SET NX nie ustawi klucza i brak wpisu w DB → IdempotencyConflictError (bez del Redis)", async () => {
     const redis = {
       set: vi.fn().mockResolvedValue(null),
       del: vi.fn(),
     };
-    const service = new RefundService({} as PrismaClient);
+    const prisma = {
+      refund: { findUnique: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaClient;
+    const service = new RefundService(prisma);
     await expect(
       service.createRefund({
         redis: redis as never,
@@ -145,6 +148,84 @@ describe("RefundService.createRefund — idempotencja Redis", () => {
         amount: 1n,
         coveredBy: RefundCoveredBy.PLATFORM,
         idempotencyKey: "idem-duplicate",
+        initiatedBy: "u1",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyConflictError);
+    expect(redis.del).not.toHaveBeenCalled();
+    expect(prisma.refund.findUnique).toHaveBeenCalledWith({
+      where: { idempotencyKey: "idem-duplicate" },
+      include: { charge: { select: { integratorUserId: true } } },
+    });
+  });
+
+  it("po Redis NX miss zwraca trwały refund gdy charge/kwota/coveredBy się zgadzają", async () => {
+    const existing = {
+      id: "ref-durable-1",
+      chargeId: "c1",
+      amount: 400n,
+      currency: "PLN",
+      status: "SUCCEEDED",
+      coveredBy: RefundCoveredBy.PLATFORM,
+      reason: null,
+      initiatedBy: "u1",
+      idempotencyKey: "idem-durable-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      charge: { integratorUserId: "u1" },
+    };
+    const redis = {
+      set: vi.fn().mockResolvedValue(null),
+      del: vi.fn(),
+    };
+    const prisma = {
+      refund: { findUnique: vi.fn().mockResolvedValue(existing) },
+    } as unknown as PrismaClient;
+    const service = new RefundService(prisma);
+    const out = await service.createRefund({
+      redis: redis as never,
+      integratorUserId: "u1",
+      chargeId: "c1",
+      amount: 400n,
+      coveredBy: RefundCoveredBy.PLATFORM,
+      idempotencyKey: "idem-durable-1",
+      initiatedBy: "u1",
+    });
+    expect(out.refund.id).toBe("ref-durable-1");
+    expect(out.refund.amount).toBe(400n);
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
+  it("po Redis NX miss rzuca konflikt gdy kwota nie pasuje do trwałego refund", async () => {
+    const existing = {
+      id: "ref-mismatch",
+      chargeId: "c1",
+      amount: 400n,
+      currency: "PLN",
+      status: "SUCCEEDED",
+      coveredBy: RefundCoveredBy.PLATFORM,
+      reason: null,
+      initiatedBy: "u1",
+      idempotencyKey: "idem-mismatch-amt",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      charge: { integratorUserId: "u1" },
+    };
+    const redis = {
+      set: vi.fn().mockResolvedValue(null),
+      del: vi.fn(),
+    };
+    const prisma = {
+      refund: { findUnique: vi.fn().mockResolvedValue(existing) },
+    } as unknown as PrismaClient;
+    const service = new RefundService(prisma);
+    await expect(
+      service.createRefund({
+        redis: redis as never,
+        integratorUserId: "u1",
+        chargeId: "c1",
+        amount: 500n,
+        coveredBy: RefundCoveredBy.PLATFORM,
+        idempotencyKey: "idem-mismatch-amt",
         initiatedBy: "u1",
       }),
     ).rejects.toBeInstanceOf(IdempotencyConflictError);
