@@ -79,6 +79,40 @@ export class RefundConfigurationError extends Error {
   }
 }
 
+type RefundIdempotencyReplay = Pick<Refund, "chargeId" | "amount" | "coveredBy"> & {
+  charge: { integratorUserId: string };
+};
+
+/**
+ * Replay Idempotency-Key only when charge, amount, coverage, and integrator match.
+ * Mismatch → 409 (same class as marketplace charge reference reuse).
+ */
+export function assertRefundIdempotencyMatch(
+  existing: RefundIdempotencyReplay,
+  expected: {
+    integratorUserId: string;
+    chargeId: string;
+    amount: bigint;
+    coveredBy: RefundCoveredBy;
+  },
+): void {
+  if (
+    existing.charge.integratorUserId !== expected.integratorUserId ||
+    existing.chargeId !== expected.chargeId ||
+    existing.amount !== expected.amount ||
+    existing.coveredBy !== expected.coveredBy
+  ) {
+    throw new IdempotencyConflictError();
+  }
+}
+
+function stripRefundChargeRelation<T extends { charge: unknown }>(
+  row: T,
+): Omit<T, "charge"> {
+  const { charge: _charge, ...refund } = row;
+  return refund;
+}
+
 export type ChargeLedgerComposition = {
   /** Kwota „platform” z ledgera (`mkt:{id}:credit:platform`). */
   platformCents: bigint;
@@ -325,13 +359,40 @@ export class RefundService {
       throw new RangeError("Idempotency-Key jest wymagany.");
     }
 
+    const chargeId = params.chargeId.trim();
+    const replayExpected = {
+      integratorUserId: params.integratorUserId,
+      chargeId,
+      amount: params.amount,
+      coveredBy: params.coveredBy,
+    };
+    const refundByIdempotencyKey = {
+      where: { idempotencyKey: idem },
+      include: { charge: { select: { integratorUserId: true as const } } },
+    };
+
     const redisKey = `${REFUND_IDEMP_REDIS_PREFIX}${idem}`;
     const setOk = await params.redis.set(redisKey, "1", "EX", 86_400, "NX");
     if (setOk !== "OK") {
+      const replay = await this.prisma.refund.findUnique(refundByIdempotencyKey);
+      if (replay !== null) {
+        assertRefundIdempotencyMatch(replay, replayExpected);
+        return { refund: stripRefundChargeRelation(replay) as Refund };
+      }
       throw new IdempotencyConflictError();
     }
 
-    const chargeId = params.chargeId.trim();
+    const existingDurable = await this.prisma.refund.findUnique(refundByIdempotencyKey);
+    if (existingDurable !== null) {
+      try {
+        assertRefundIdempotencyMatch(existingDurable, replayExpected);
+      } catch (err) {
+        await params.redis.del(redisKey);
+        throw err;
+      }
+      return { refund: stripRefundChargeRelation(existingDurable) as Refund };
+    }
+
     if (chargeId.length === 0) {
       await params.redis.del(redisKey);
       throw new RangeError("chargeId jest wymagane.");
@@ -620,6 +681,11 @@ export class RefundService {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         const target = err.meta?.target;
         if (Array.isArray(target) && target.includes("idempotencyKey")) {
+          const raced = await this.prisma.refund.findUnique(refundByIdempotencyKey);
+          if (raced !== null) {
+            assertRefundIdempotencyMatch(raced, replayExpected);
+            return { refund: stripRefundChargeRelation(raced) as Refund };
+          }
           throw new IdempotencyConflictError();
         }
       }
