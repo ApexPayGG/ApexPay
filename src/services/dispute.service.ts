@@ -47,6 +47,14 @@ export class DisputeInvalidStateError extends Error {
   }
 }
 
+/** Powtórka `pspDisputeId` z innymi chargeId/amount/currency/reason. */
+export class DisputeIdempotencyConflictError extends Error {
+  constructor() {
+    super("pspDisputeId został już użyty dla innego sporu.");
+    this.name = "DisputeIdempotencyConflictError";
+  }
+}
+
 const pspDisputeWebhookSchema = z
   .object({
     pspDisputeId: z.string().trim().min(1).max(256),
@@ -79,8 +87,36 @@ const OPEN_DISPUTE_STATUSES: DisputeStatus[] = [
   DisputeStatus.EVIDENCE_SUBMITTED,
 ];
 
+/** Statusy, które nadal „konsumują” ekspozycję charge (hold lub finalny debit). WON wyłączone. */
+const DISPUTE_EXPOSURE_STATUSES: DisputeStatus[] = [
+  DisputeStatus.RECEIVED,
+  DisputeStatus.UNDER_REVIEW,
+  DisputeStatus.EVIDENCE_SUBMITTED,
+  DisputeStatus.LOST,
+  DisputeStatus.ACCEPTED,
+];
+
 function isOpenDispute(status: DisputeStatus): boolean {
   return OPEN_DISPUTE_STATUSES.includes(status);
+}
+
+function assertDisputeReplayMatches(
+  existing: Dispute,
+  expected: {
+    chargeId: string;
+    amount: bigint;
+    currency: string;
+    reason: DisputeReason;
+  },
+): void {
+  const same =
+    existing.chargeId === expected.chargeId &&
+    existing.amount === expected.amount &&
+    existing.currency.toUpperCase() === expected.currency &&
+    existing.reason === expected.reason;
+  if (!same) {
+    throw new DisputeIdempotencyConflictError();
+  }
 }
 
 export type DisputeListFilters = {
@@ -109,14 +145,22 @@ export class DisputeService {
     payload: PspDisputeWebhookPayload,
   ): Promise<{ dispute: Dispute; duplicate: boolean; webhookOutboxId: string | null }> {
     const pspDisputeId = payload.pspDisputeId.trim();
+    const chargeId = payload.chargeId.trim();
     const amount = toPositiveBigInt(payload.amount);
     const currency = payload.currency.trim().toUpperCase();
     const evidenceDueBy = payload.evidenceDueBy;
+    const replayExpected = {
+      chargeId,
+      amount,
+      currency,
+      reason: payload.reason,
+    };
 
     const existing = await this.prisma.dispute.findUnique({
       where: { pspDisputeId },
     });
     if (existing !== null) {
+      assertDisputeReplayMatches(existing, replayExpected);
       return { dispute: existing, duplicate: true, webhookOutboxId: null };
     }
 
@@ -127,6 +171,7 @@ export class DisputeService {
         where: { pspDisputeId },
       });
       if (again !== null) {
+        assertDisputeReplayMatches(again, replayExpected);
         return { dispute: again, duplicate: true, webhookOutboxId: null };
       }
       throw new DisputeValidationError("Powtórka webhooka — spróbuj ponownie.");
@@ -135,8 +180,17 @@ export class DisputeService {
     try {
       const result = await this.prisma.$transaction(
         async (tx) => {
+          await tx.$queryRaw(
+            PrismaNs.sql`
+              SELECT "id"
+              FROM "marketplace_charges"
+              WHERE "id" = ${chargeId}
+              FOR UPDATE
+            `,
+          );
+
           const charge = await tx.marketplaceCharge.findUnique({
-            where: { id: payload.chargeId.trim() },
+            where: { id: chargeId },
           });
           if (charge === null) {
             throw new DisputeChargeNotFoundError();
@@ -146,6 +200,20 @@ export class DisputeService {
           }
           if (amount > charge.amountCents) {
             throw new DisputeValidationError("Kwota sporu nie może przekraczać kwoty charge.");
+          }
+
+          const agg = await tx.dispute.aggregate({
+            where: {
+              chargeId: charge.id,
+              status: { in: DISPUTE_EXPOSURE_STATUSES },
+            },
+            _sum: { amount: true },
+          });
+          const alreadyExposed = agg._sum.amount ?? 0n;
+          if (alreadyExposed + amount > charge.amountCents) {
+            throw new DisputeValidationError(
+              "Suma sporów nie może przekraczać kwoty charge.",
+            );
           }
 
           const integratorWallet = await tx.wallet.findUnique({
@@ -249,6 +317,7 @@ export class DisputeService {
           where: { pspDisputeId },
         });
         if (again !== null) {
+          assertDisputeReplayMatches(again, replayExpected);
           return { dispute: again, duplicate: true, webhookOutboxId: null };
         }
       }

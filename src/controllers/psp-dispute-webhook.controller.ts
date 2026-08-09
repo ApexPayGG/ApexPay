@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import {
   DisputeChargeNotFoundError,
+  DisputeIdempotencyConflictError,
   DisputeService,
   DisputeValidationError,
 } from "../services/dispute.service.js";
@@ -47,6 +48,10 @@ export class PspDisputeWebhookController {
       }
       if (err instanceof DisputeValidationError) {
         res.status(400).json({ error: err.message });
+        return;
+      }
+      if (err instanceof DisputeIdempotencyConflictError) {
+        res.status(409).json({ error: err.message });
         return;
       }
       if (err instanceof WalletNotFoundError) {

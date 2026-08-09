@@ -5,7 +5,12 @@ import {
   TransactionType,
   type PrismaClient,
 } from "@prisma/client";
-import { DisputeService, PSP_DISPUTE_IDEMP_REDIS_PREFIX } from "./dispute.service.js";
+import {
+  DisputeIdempotencyConflictError,
+  DisputeService,
+  DisputeValidationError,
+  PSP_DISPUTE_IDEMP_REDIS_PREFIX,
+} from "./dispute.service.js";
 import type { AuditLogService } from "./audit-log.service.js";
 
 describe("DisputeService", () => {
@@ -62,6 +67,7 @@ describe("DisputeService", () => {
       },
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ id: chargeId }]),
           marketplaceCharge: {
             findUnique: vi.fn().mockResolvedValue(baseCharge),
           },
@@ -69,7 +75,10 @@ describe("DisputeService", () => {
             findUnique: vi.fn().mockResolvedValue({ id: walletId }),
             update: walletUpdate,
           },
-          dispute: { create: disputeCreate },
+          dispute: {
+            aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }),
+            create: disputeCreate,
+          },
           transaction: { create: txCreate },
           webhookOutbox: { create: woCreate },
         };
@@ -272,7 +281,7 @@ describe("DisputeService", () => {
     const r = await service.createFromWebhook({
       pspDisputeId,
       chargeId,
-      reason: DisputeReason.FRAUDULENT,
+      reason: DisputeReason.DUPLICATE,
       amount: 100,
       currency: "PLN",
       evidenceDueBy: new Date(),
@@ -321,5 +330,122 @@ describe("DisputeService", () => {
 
     expect(r.duplicate).toBe(true);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("createFromWebhook odrzuca drugi hold gdy suma sporów przekroczyłaby kwotę charge", async () => {
+    const redis = buildRedis();
+    const disputeAggregate = vi.fn().mockResolvedValue({ _sum: { amount: 10_000n } });
+    const walletUpdate = vi.fn();
+    const disputeCreate = vi.fn();
+
+    const prisma = {
+      dispute: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ id: chargeId }]),
+          marketplaceCharge: {
+            findUnique: vi.fn().mockResolvedValue(baseCharge),
+          },
+          dispute: {
+            aggregate: disputeAggregate,
+            create: disputeCreate,
+          },
+          wallet: {
+            findUnique: vi.fn().mockResolvedValue({ id: walletId }),
+            update: walletUpdate,
+          },
+          transaction: { create: vi.fn() },
+          webhookOutbox: { create: vi.fn() },
+        };
+        return fn(tx);
+      }),
+    } as unknown as PrismaClient;
+
+    const service = new DisputeService(prisma, redis as never);
+
+    await expect(
+      service.createFromWebhook({
+        pspDisputeId: "psp-disp-2",
+        chargeId,
+        reason: DisputeReason.FRAUDULENT,
+        amount: 1,
+        currency: "PLN",
+        evidenceDueBy: new Date("2026-05-01T12:00:00.000Z"),
+      }),
+    ).rejects.toBeInstanceOf(DisputeValidationError);
+
+    expect(disputeAggregate).toHaveBeenCalledWith({
+      where: {
+        chargeId,
+        status: {
+          in: [
+            DisputeStatus.RECEIVED,
+            DisputeStatus.UNDER_REVIEW,
+            DisputeStatus.EVIDENCE_SUBMITTED,
+            DisputeStatus.LOST,
+            DisputeStatus.ACCEPTED,
+          ],
+        },
+      },
+      _sum: { amount: true },
+    });
+    expect(walletUpdate).not.toHaveBeenCalled();
+    expect(disputeCreate).not.toHaveBeenCalled();
+    expect(redis.del).toHaveBeenCalled();
+  });
+
+  it("createFromWebhook przy powtórce pspDisputeId z innym chargeId/amount rzuca konflikt", async () => {
+    const existing = {
+      id: "disp_existing",
+      chargeId,
+      pspDisputeId,
+      status: DisputeStatus.RECEIVED,
+      reason: DisputeReason.DUPLICATE,
+      amount: 100n,
+      currency: "PLN",
+      evidenceDueBy: new Date(),
+      evidence: null,
+      resolvedAt: null,
+      integratorNotifiedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const prisma = {
+      dispute: {
+        findUnique: vi.fn().mockResolvedValue(existing),
+      },
+      $transaction: vi.fn(),
+    } as unknown as PrismaClient;
+
+    const redis = buildRedis();
+    const service = new DisputeService(prisma, redis as never);
+
+    await expect(
+      service.createFromWebhook({
+        pspDisputeId,
+        chargeId: "chg_other",
+        reason: DisputeReason.DUPLICATE,
+        amount: 100,
+        currency: "PLN",
+        evidenceDueBy: new Date(),
+      }),
+    ).rejects.toBeInstanceOf(DisputeIdempotencyConflictError);
+
+    await expect(
+      service.createFromWebhook({
+        pspDisputeId,
+        chargeId,
+        reason: DisputeReason.DUPLICATE,
+        amount: 999,
+        currency: "PLN",
+        evidenceDueBy: new Date(),
+      }),
+    ).rejects.toBeInstanceOf(DisputeIdempotencyConflictError);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
   });
 });
