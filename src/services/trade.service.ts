@@ -6,53 +6,32 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import {
+  TradeExpiredError,
+  TradeInsufficientFundsError,
+  TradeInvalidStatusError,
+  TradeNotFoundError,
+} from "./trade.errors.js";
+import { TradeSettlementService } from "./trade-settlement.service.js";
+
+export {
+  TradeExpiredError,
+  TradeInsufficientFundsError,
+  TradeInvalidStatusError,
+  TradeNotFoundError,
+  TradePlatformConfigError,
+} from "./trade.errors.js";
 
 const PLATFORM_FEE_PERCENT = 3;
-
-export class TradeNotFoundError extends Error {
-  constructor() {
-    super("Trade not found");
-    this.name = "TradeNotFoundError";
-  }
-}
-
-export class TradeInvalidStatusError extends Error {
-  constructor(msg = "Invalid trade status") {
-    super(msg);
-    this.name = "TradeInvalidStatusError";
-  }
-}
-
-export class TradeExpiredError extends Error {
-  constructor() {
-    super("Trade offer expired");
-    this.name = "TradeExpiredError";
-  }
-}
-
-export class TradePlatformConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TradePlatformConfigError";
-  }
-}
-
-function platformUserIdFromEnv(): string {
-  const a = process.env.APEXPAY_PLATFORM_USER_ID?.trim();
-  if (a !== undefined && a.length > 0) {
-    return a;
-  }
-  const b = process.env.SAFE_TAXI_PLATFORM_USER_ID?.trim();
-  if (b !== undefined && b.length > 0) {
-    return b;
-  }
-  throw new TradePlatformConfigError(
-    "Brak APEXPAY_PLATFORM_USER_ID lub SAFE_TAXI_PLATFORM_USER_ID (prowizja trade).",
-  );
-}
+/** After payTrade, buyer may reclaim escrow only once this window elapses. */
+const ESCROW_HOLD_MS = 72 * 3600 * 1000;
 
 export class TradeService {
-  constructor(private readonly prisma: PrismaClient) {}
+  private readonly settlement: TradeSettlementService;
+
+  constructor(private readonly prisma: PrismaClient) {
+    this.settlement = new TradeSettlementService(prisma);
+  }
 
   async createTrade(
     sellerId: string,
@@ -241,6 +220,8 @@ export class TradeService {
             buyerId,
             status: TradeStatus.PAID_AWAITING_ITEM,
             escrowReferenceId: ref,
+            // Offer expiry must not strand paid escrow — reset a delivery window from payment.
+            expiresAt: new Date(Date.now() + ESCROW_HOLD_MS),
           },
         });
       },
@@ -252,160 +233,15 @@ export class TradeService {
     );
   }
 
-  /** Kupujący potwierdza odbiór — wypłata netto sprzedawcy + prowizja platformy. */
   async confirmReceipt(tradeId: string, buyerId: string): Promise<void> {
-    const platformUserId = platformUserIdFromEnv();
-
-    await this.prisma.$transaction(
-      async (tx) => {
-        const trade = await tx.trade.findUnique({ where: { id: tradeId } });
-        if (trade === null) {
-          throw new TradeNotFoundError();
-        }
-        if (trade.status === TradeStatus.COMPLETED) {
-          return;
-        }
-        if (trade.status !== TradeStatus.PAID_AWAITING_ITEM) {
-          throw new TradeInvalidStatusError("Trade is not awaiting confirmation");
-        }
-        if (trade.buyerId !== buyerId) {
-          throw new TradeInvalidStatusError("Only the buyer can confirm receipt");
-        }
-
-        const sellerNet = trade.amountCents - trade.platformFeeCents;
-        if (sellerNet < 0n) {
-          throw new TradeInvalidStatusError("Invalid fee configuration for trade");
-        }
-
-        const [sellerWallet, platformWallet] = await Promise.all([
-          tx.wallet.findUnique({
-            where: { userId: trade.sellerId },
-            select: { id: true },
-          }),
-          tx.wallet.findUnique({
-            where: { userId: platformUserId },
-            select: { id: true },
-          }),
-        ]);
-        if (sellerWallet === null || platformWallet === null) {
-          throw new TradeInvalidStatusError("Seller or platform wallet missing");
-        }
-
-        await tx.wallet.update({
-          where: { id: sellerWallet.id },
-          data: { balance: { increment: sellerNet } },
-        });
-        await tx.transaction.create({
-          data: {
-            walletId: sellerWallet.id,
-            amount: sellerNet,
-            referenceId: `trade:${tradeId}:seller`,
-            type: TxType.TRADE_SELLER_CREDIT,
-          },
-        });
-
-        if (trade.platformFeeCents > 0n) {
-          await tx.wallet.update({
-            where: { id: platformWallet.id },
-            data: { balance: { increment: trade.platformFeeCents } },
-          });
-          await tx.transaction.create({
-            data: {
-              walletId: platformWallet.id,
-              amount: trade.platformFeeCents,
-              referenceId: `trade:${tradeId}:platform`,
-              type: TxType.TRADE_PLATFORM_FEE,
-            },
-          });
-        }
-
-        await tx.trade.update({
-          where: { id: tradeId },
-          data: {
-            status: TradeStatus.COMPLETED,
-            completedAt: new Date(),
-          },
-        });
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 5000,
-        timeout: 15000,
-      },
-    );
+    return this.settlement.confirmReceipt(tradeId, buyerId);
   }
 
-  /**
-   * Sprzedawca anuluje: przed płatnością — bez ruchu środkami; po wpłacie kupującego — pełny zwrot escrow.
-   */
   async cancelBySeller(tradeId: string, sellerId: string): Promise<void> {
-    await this.prisma.$transaction(
-      async (tx) => {
-        const trade = await tx.trade.findUnique({ where: { id: tradeId } });
-        if (trade === null) {
-          throw new TradeNotFoundError();
-        }
-        if (trade.sellerId !== sellerId) {
-          throw new TradeInvalidStatusError("Only the seller can cancel this trade");
-        }
-        if (trade.status === TradeStatus.CANCELLED || trade.status === TradeStatus.COMPLETED) {
-          throw new TradeInvalidStatusError("Trade already finalized");
-        }
-        if (trade.status === TradeStatus.DISPUTED) {
-          throw new TradeInvalidStatusError("Trade is disputed");
-        }
-
-        if (trade.status === TradeStatus.PENDING_PAYMENT) {
-          await tx.trade.update({
-            where: { id: tradeId },
-            data: { status: TradeStatus.CANCELLED },
-          });
-          return;
-        }
-
-        if (trade.status === TradeStatus.PAID_AWAITING_ITEM) {
-          if (trade.buyerId === null) {
-            throw new TradeInvalidStatusError("Trade has no buyer");
-          }
-          const buyerWallet = await tx.wallet.findUnique({
-            where: { userId: trade.buyerId },
-            select: { id: true },
-          });
-          if (buyerWallet === null) {
-            throw new TradeInvalidStatusError("Buyer wallet not found");
-          }
-
-          await tx.wallet.update({
-            where: { userId: trade.buyerId },
-            data: { balance: { increment: trade.amountCents } },
-          });
-          await tx.transaction.create({
-            data: {
-              walletId: buyerWallet.id,
-              amount: trade.amountCents,
-              referenceId: `trade:${tradeId}:cancel-refund`,
-              type: TxType.REFUND,
-            },
-          });
-
-          await tx.trade.update({
-            where: { id: tradeId },
-            data: { status: TradeStatus.CANCELLED },
-          });
-        }
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 5000,
-        timeout: 15000,
-      },
-    );
+    return this.settlement.cancelBySeller(tradeId, sellerId);
   }
-}
 
-export class TradeInsufficientFundsError extends Error {
-  constructor() {
-    super("Insufficient funds");
-    this.name = "TradeInsufficientFundsError";
+  async cancelByBuyer(tradeId: string, buyerId: string): Promise<void> {
+    return this.settlement.cancelByBuyer(tradeId, buyerId);
   }
 }

@@ -303,6 +303,16 @@ export function TradeViewPage(): ReactElement {
     return new Date(trade.expiresAt).getTime() <= nowTick;
   }, [trade, nowTick]);
 
+  const expiredEscrow = useMemo(() => {
+    if (trade === null || trade.status !== "PAID_AWAITING_ITEM") {
+      return false;
+    }
+    if (trade.expiresAt === null) {
+      return true;
+    }
+    return new Date(trade.expiresAt).getTime() <= nowTick;
+  }, [trade, nowTick]);
+
   const countdownText = useMemo(() => {
     if (trade === null || trade.status !== "PENDING_PAYMENT" || trade.expiresAt === null || expiredPending) {
       return null;
@@ -334,8 +344,9 @@ export function TradeViewPage(): ReactElement {
 
   const canCancel =
     trade !== null &&
-    isSeller &&
-    (trade.status === "PENDING_PAYMENT" || trade.status === "PAID_AWAITING_ITEM");
+    ((isSeller &&
+      (trade.status === "PENDING_PAYMENT" || trade.status === "PAID_AWAITING_ITEM")) ||
+      (isBuyer === true && expiredEscrow));
 
   const handlePay = async (): Promise<void> => {
     if (getToken() === null) {
