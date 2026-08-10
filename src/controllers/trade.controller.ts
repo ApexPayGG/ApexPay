@@ -188,7 +188,15 @@ export class TradeController {
     }
 
     try {
-      await this.tradeService.cancelBySeller(tradeId, userId);
+      const trade = await this.tradeService.getTrade(tradeId);
+      if (trade.sellerId === userId) {
+        await this.tradeService.cancelBySeller(tradeId, userId);
+      } else if (trade.buyerId === userId) {
+        await this.tradeService.cancelByBuyer(tradeId, userId);
+      } else {
+        sendApiError(res, 403, ApiErrorCode.FORBIDDEN, "Only buyer or seller can cancel");
+        return;
+      }
       res.status(200).json({ status: "success", data: { cancelled: true } });
     } catch (err) {
       if (err instanceof TradeNotFoundError) {
