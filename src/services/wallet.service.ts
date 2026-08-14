@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient, Transaction, TransactionType } from "@prisma/client";
 import { Prisma, TransactionType as TxType } from "@prisma/client";
-import { isInsufficientFundsDbError } from "../lib/prisma-wallet-errors.js";
+import { debitWalletIfSufficient } from "../lib/wallet-debit.js";
 
 export class InsufficientFundsError extends Error {
   constructor() {
@@ -134,16 +134,9 @@ export class WalletService {
         throw new WalletNotFoundError();
       }
 
-      try {
-        await tx.wallet.update({
-          where: { userId: fromUserId },
-          data: { balance: { decrement: amount } },
-        });
-      } catch (err) {
-        if (isInsufficientFundsDbError(err)) {
-          throw new InsufficientFundsError();
-        }
-        throw err;
+      const debited = await debitWalletIfSufficient(tx, fromUserId, amount);
+      if (!debited) {
+        throw new InsufficientFundsError();
       }
 
       await tx.wallet.update({
@@ -316,20 +309,19 @@ export class WalletService {
         return existing;
       }
 
-      let walletId: string;
-      try {
-        const updated = await tx.wallet.update({
-          where: { userId },
-          data: { balance: { decrement: amount } },
-          select: { id: true },
-        });
-        walletId = updated.id;
-      } catch (err) {
-        if (isInsufficientFundsDbError(err)) {
-          throw new InsufficientFundsError();
-        }
-        throw err;
+      const debited = await debitWalletIfSufficient(tx, userId, amount);
+      if (!debited) {
+        throw new InsufficientFundsError();
       }
+
+      const wallet = await tx.wallet.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      if (wallet === null) {
+        throw new InsufficientFundsError();
+      }
+      const walletId = wallet.id;
 
       return await tx.transaction.create({
         data: {
