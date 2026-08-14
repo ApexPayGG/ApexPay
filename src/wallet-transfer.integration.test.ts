@@ -28,6 +28,7 @@ describe("POST /api/v1/wallet/transfer (integration)", () => {
           .fn()
           .mockResolvedValueOnce({ id: "wal-from" })
           .mockResolvedValueOnce({ id: "wal-to" }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         update: vi.fn().mockResolvedValue({}),
       },
     };
