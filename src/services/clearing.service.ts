@@ -35,6 +35,21 @@ export class ClearingService {
       return false;
     }
 
+    const existingPrize = await tx.transaction.findFirst({
+      where: {
+        type: TransactionType.PRIZE_PAYOUT,
+        OR: [
+          { referenceId: `payout_win_${match.id}` },
+          { referenceId: `payout_win_v1_${match.id}` },
+          { referenceId: { startsWith: `payout_win_${match.id}_` } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (existingPrize !== null) {
+      return true;
+    }
+
     const t = match.tournament;
     const participantsCount = BigInt(t.participants.length);
     const totalPool = t.entryFee * participantsCount;
@@ -60,7 +75,7 @@ export class ClearingService {
     await tx.transaction.create({
       data: {
         amount: winnerPayout,
-        referenceId: `payout_win_${match.id}_${Date.now()}`,
+        referenceId: `payout_win_${match.id}`,
         type: TransactionType.PRIZE_PAYOUT,
         walletId: winnerWallet.id,
       },
@@ -75,7 +90,7 @@ export class ClearingService {
       await tx.transaction.create({
         data: {
           amount: organizerCut,
-          referenceId: `payout_org_${match.id}_${Date.now()}`,
+          referenceId: `payout_org_${match.id}`,
           type: TransactionType.PRIZE_PAYOUT,
           walletId: t.organizer.wallet.id,
         },
