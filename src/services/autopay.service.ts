@@ -1,5 +1,10 @@
 import { parseStringPromise } from "xml2js";
-import { getAutopayConfig, verifyHash, generateHash } from "../infra/autopay.js";
+import {
+  getAutopayConfig,
+  verifyHash,
+  generateHash,
+  compactHashFields,
+} from "../infra/autopay.js";
 
 export type CreateAutopayPaymentLinkParams = {
   orderId: string;
@@ -18,6 +23,9 @@ export type AutopayItnData = {
   Currency: string;
   PaymentStatus: string;
   Hash: string;
+  GatewayID?: string;
+  PaymentDate?: string;
+  PaymentStatusDetails?: string;
   CustomerHash?: string;
 };
 
@@ -45,14 +53,21 @@ function deepFindByKey(obj: unknown, key: string): string | undefined {
 export class AutopayService {
   createPaymentLink(params: CreateAutopayPaymentLinkParams): string {
     const cfg = getAutopayConfig();
-    const description = params.description.trim().slice(0, 255);
-    const hash = generateHash([
-      cfg.serviceId,
-      params.orderId,
-      params.amount,
-      description,
-      params.customerEmail,
-    ]);
+    const description = params.description.trim().slice(0, 79);
+    const returnUrl = params.returnUrl?.trim() || cfg.returnUrl;
+    // Autopay start hash numbering: ServiceID, OrderID, Amount, Description,
+    // GatewayID (omitted), Currency, CustomerEmail, …, ReturnURL.
+    const hash = generateHash(
+      compactHashFields([
+        cfg.serviceId,
+        params.orderId,
+        params.amount,
+        description,
+        params.currency,
+        params.customerEmail,
+        returnUrl,
+      ]),
+    );
 
     const q = new URLSearchParams();
     q.set("ServiceID", cfg.serviceId);
@@ -85,6 +100,18 @@ export class AutopayService {
       PaymentStatus: deepFindByKey(parsed, "PaymentStatus") ?? "",
       Hash: deepFindByKey(parsed, "Hash") ?? "",
     };
+    const gatewayId = deepFindByKey(parsed, "GatewayID");
+    if (gatewayId !== undefined && gatewayId.length > 0) {
+      out.GatewayID = gatewayId;
+    }
+    const paymentDate = deepFindByKey(parsed, "PaymentDate");
+    if (paymentDate !== undefined && paymentDate.length > 0) {
+      out.PaymentDate = paymentDate;
+    }
+    const paymentStatusDetails = deepFindByKey(parsed, "PaymentStatusDetails");
+    if (paymentStatusDetails !== undefined && paymentStatusDetails.length > 0) {
+      out.PaymentStatusDetails = paymentStatusDetails;
+    }
     const customerHash = deepFindByKey(parsed, "CustomerHash");
     if (customerHash !== undefined && customerHash.length > 0) {
       out.CustomerHash = customerHash;
@@ -105,15 +132,21 @@ export class AutopayService {
   }
 
   verifyItnHash(itn: AutopayItnData): boolean {
+    // Official Autopay ITN hash order (empty optionals skipped):
+    // ServiceID|OrderID|RemoteID|Amount|Currency|GatewayID|PaymentDate|
+    // PaymentStatus|PaymentStatusDetails|SHARED_KEY
     return verifyHash(
-      [
+      compactHashFields([
         itn.ServiceID,
         itn.OrderID,
         itn.RemoteID,
         itn.Amount,
         itn.Currency,
+        itn.GatewayID,
+        itn.PaymentDate,
         itn.PaymentStatus,
-      ],
+        itn.PaymentStatusDetails,
+      ]),
       itn.Hash,
     );
   }

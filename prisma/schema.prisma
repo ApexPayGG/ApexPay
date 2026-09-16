@@ -91,6 +91,18 @@ model User {
   webhookDeadLetters   WebhookDeadLetter[]
   tradesSold           Trade[]                 @relation("TradesSold")
   tradesBought         Trade[]                 @relation("TradesBought")
+  autopayOrders        AutopayOrder[]
+}
+
+/// Inicjacja wpłaty Autopay: OrderID musi być ≤32 znaków [A-Za-z0-9_-] i unikalny.
+model AutopayOrder {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("autopay_orders")
 }
 
 /// Escrow P2P (przedmiot / kwota / prowizja platformy).

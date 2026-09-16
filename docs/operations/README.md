@@ -31,9 +31,9 @@ Po **5** nieudanych próbach dostarczenia (HTTP non-2xx, timeout, błąd sieci) 
 
 ## Autopay / Blue Media (v2.22.1)
 
-- Inicjacja płatności redirect przez `POST /api/v1/payments/initiate` (JWT): API zwraca URL do bramki Autopay (`AUTOPAY_GATEWAY_URL`) i `orderId` (`dep:{userId}:{timestamp}`).
+- Inicjacja płatności redirect przez `POST /api/v1/payments/initiate` (JWT): API zwraca URL do bramki Autopay (`AUTOPAY_GATEWAY_URL`) i `orderId` (32 hex w `autopay_orders`).
 - ITN endpoint: `POST /internal/webhooks/autopay-itn` przyjmuje `application/x-www-form-urlencoded` z polem `transactions` (base64 XML).
-- Weryfikacja integralności ITN opiera się o hash SHA-256 (`ServiceID|OrderID|RemoteID|Amount|Currency|PaymentStatus|SHARED_KEY`).
+- Weryfikacja integralności ITN: hash SHA-256 w kolejności Autopay (`ServiceID|OrderID|RemoteID|Amount|Currency|GatewayID|PaymentDate|PaymentStatus|PaymentStatusDetails|SHARED_KEY`; puste opcjonalne pomijane).
 - Idempotencja ITN: `idemp:autopay-itn:{OrderID}:{RemoteID}` (Redis, 24 h).
 - `PaymentStatus=SUCCESS` księguje wpłatę (`WalletService.depositFundsPspWebhook`) i opcjonalnie zapisuje `CustomerHash` jako `PaymentMethod(provider=AUTOPAY, type=AUTOPAY_RECURRING)` pod przyszłe płatności one-click.
 
