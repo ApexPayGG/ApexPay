@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 export type AutopayConfig = {
   serviceId: string;
@@ -26,12 +26,34 @@ export function getAutopayConfig(): AutopayConfig {
   };
 }
 
+/** Autopay OrderID: 1–32 znaków, alfanumeryczne plus `-` `_`. */
+export const AUTOPAY_ORDER_ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
+
+export function createAutopayOrderId(): string {
+  return randomBytes(16).toString("hex");
+}
+
 /**
  * Autopay BM: hash SHA-256 z `field1|field2|...|SHARED_KEY` (hex lowercase).
+ * Puste pola opcjonalne są pomijane (numeracja Autopay).
  */
+export function compactHashFields(fields: Array<string | undefined | null>): string[] {
+  const out: string[] = [];
+  for (const field of fields) {
+    if (typeof field !== "string") {
+      continue;
+    }
+    const trimmed = field.trim();
+    if (trimmed.length > 0) {
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
 export function generateHash(fields: string[]): string {
   const sharedKey = getRequiredEnv("AUTOPAY_SHARED_KEY");
-  const base = [...fields.map((f) => f.trim()), sharedKey].join("|");
+  const base = [...compactHashFields(fields), sharedKey].join("|");
   return createHash("sha256").update(base, "utf8").digest("hex");
 }
 

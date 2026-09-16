@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import type { PrismaClient } from "@prisma/client";
 import { PaymentMethodProvider } from "@prisma/client";
 import type { Redis } from "ioredis";
 import { contextLogger } from "../lib/logger.js";
@@ -41,6 +42,7 @@ export class AutopayItnWebhookController {
     private readonly walletService: WalletService,
     private readonly paymentMethodService: PaymentMethodService,
     private readonly redis: Redis,
+    private readonly prisma: PrismaClient,
   ) {}
 
   async handle(req: Request, res: Response): Promise<void> {
@@ -66,7 +68,11 @@ export class AutopayItnWebhookController {
       }
 
       if (itn.PaymentStatus === "SUCCESS") {
-        const userId = userIdFromOrderId(itn.OrderID);
+        const mapped = await this.prisma.autopayOrder.findUnique({
+          where: { id: itn.OrderID },
+          select: { userId: true },
+        });
+        const userId = mapped?.userId ?? userIdFromOrderId(itn.OrderID);
         const amountMinor = Math.round(Number.parseFloat(itn.Amount) * 100);
         if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
           throw new RangeError("Invalid Amount");

@@ -219,6 +219,7 @@ export function createApp(options: CreateAppOptions): {
     walletService,
     paymentMethodService,
     options.redis,
+    options.prisma,
   );
   const apiKeyService = new ApiKeyService(options.prisma, auditLogService);
   const apiKeyAuthMiddleware = createApiKeyAuthMiddleware(apiKeyService);

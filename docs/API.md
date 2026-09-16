@@ -173,15 +173,15 @@ Bez PSP: **ADMIN** tworzy subkonto (`ConnectedAccount`) dla użytkownika z portf
 |--------|---------|------|
 | POST | `/internal/webhooks/psp-deposit` | HMAC nagłówek `x-apexpay-signature` (hex SHA-256 surowego JSON body; sekret `PSP_DEPOSIT_WEBHOOK_SECRET`). Body: `{ "pspRefId", "amount" (int, minor units), "userId", "currency", "status": "SUCCESS" \| "FAILED" \| "PENDING" }`. Idempotencja: Redis `idemp:deposit:{pspRefId}` + ledger `dep:{pspRefId}`. |
 | POST | `/internal/webhooks/psp-dispute` | Ten sam HMAC co wpłata (`PSP_DEPOSIT_WEBHOOK_SECRET`, nagłówek `x-apexpay-signature`). Body (strict): `{ "pspDisputeId", "chargeId", "reason" (enum `DisputeReason`), "amount" (int > 0, grosze), "currency", "evidenceDueBy" (ISO-8601) }`. Tworzy `Dispute`, ledger **`DISPUTE_HOLD`** na portfelu integratora (`referenceId` `disp:{disputeId}:hold`), outbox **`dispute.created`**, audyt **`DISPUTE_CREATED`**. Idempotencja: Redis `idemp:dispute:{pspDisputeId}` + unikalność `pspDisputeId` w DB. Powtórka → **200** z `duplicate: true`. |
-| POST | `/internal/webhooks/autopay-itn` | ITN Autopay BM (form-urlencoded): pole `transactions` zawiera **base64 XML**. Weryfikacja hash SHA-256 po polach `ServiceID|OrderID|RemoteID|Amount|Currency|PaymentStatus|SHARED_KEY`. Idempotencja: Redis `idemp:autopay-itn:{OrderID}:{RemoteID}`. Dla `PaymentStatus=SUCCESS` księgowanie wpłaty (`dep:{RemoteID}`) na podstawie `OrderID` (`dep:{userId}:{timestamp}`), opcjonalnie zapis metody `AUTOPAY` z `CustomerHash` (`type: AUTOPAY_RECURRING`). Odpowiedź zawsze **200 XML** (`CONFIRMED` lub XML błędu przy niepoprawnym hash/payload). |
+| POST | `/internal/webhooks/autopay-itn` | ITN Autopay BM (form-urlencoded): pole `transactions` zawiera **base64 XML**. Weryfikacja hash SHA-256 w kolejności Autopay: `ServiceID\|OrderID\|RemoteID\|Amount\|Currency\|GatewayID\|PaymentDate\|PaymentStatus\|PaymentStatusDetails\|SHARED_KEY` (puste pola opcjonalne pomijane). Idempotencja: Redis `idemp:autopay-itn:{OrderID}:{RemoteID}`. Dla `PaymentStatus=SUCCESS` księgowanie wpłaty (`dep:{RemoteID}`) na `userId` z `AutopayOrder` (albo legacy `OrderID` `dep:{userId}:{timestamp}`), opcjonalnie zapis metody `AUTOPAY` z `CustomerHash` (`type: AUTOPAY_RECURRING`). Odpowiedź zawsze **200 XML** (`CONFIRMED` lub XML błędu przy niepoprawnym hash/payload). |
 
 ## Integracja PSP (Autopay BM)
 
 - Wymagane ENV: `AUTOPAY_SERVICE_ID`, `AUTOPAY_SHARED_KEY`, `AUTOPAY_GATEWAY_URL`, `AUTOPAY_RETURN_URL`, `AUTOPAY_ITN_URL`.
 - Bramka: sandbox `https://pay-accept.bm.pl`, produkcja `https://pay.bm.pl`.
-- Inicjacja (`/api/v1/payments/initiate`) zwraca URL redirect (`GET`) z parametrami `ServiceID`, `OrderID`, `Amount`, `Description`, `CustomerEmail`, `Hash`.
-- Hash inicjacji: `ServiceID|OrderID|Amount|Description|CustomerEmail|SHARED_KEY` (SHA-256 hex lowercase).
-- ITN hash: `ServiceID|OrderID|RemoteID|Amount|Currency|PaymentStatus|SHARED_KEY`.
+- Inicjacja (`/api/v1/payments/initiate`) zwraca URL redirect (`GET`) z parametrami `ServiceID`, `OrderID` (32 hex, zapisany w `AutopayOrder`), `Amount`, `Currency`, `Description`, `CustomerEmail`, `ReturnURL`, `Hash`.
+- Hash inicjacji (numeracja Autopay, puste opcjonalne pomijane): `ServiceID|OrderID|Amount|Description|Currency|CustomerEmail|ReturnURL|SHARED_KEY` (SHA-256 hex lowercase).
+- ITN hash: `ServiceID|OrderID|RemoteID|Amount|Currency|GatewayID|PaymentDate|PaymentStatus|PaymentStatusDetails|SHARED_KEY`.
 
 ## CI / CD
 

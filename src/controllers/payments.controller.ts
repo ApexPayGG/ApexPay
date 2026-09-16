@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z, ZodError } from "zod";
 import type { Redis } from "ioredis";
 import { AutopayService } from "../services/autopay.service.js";
+import { createAutopayOrderId } from "../infra/autopay.js";
 import {
   RideFinalizeConfigError,
   RideFinalizeNotFoundError,
@@ -52,7 +53,7 @@ export class PaymentsController {
     try {
       const body = bodySchema.parse(req.body);
       const amountMajor = (body.amount / 100).toFixed(2);
-      const orderId = `dep:${userId}:${Date.now()}`;
+      const orderId = createAutopayOrderId();
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { email: true },
@@ -61,6 +62,10 @@ export class PaymentsController {
         res.status(404).json({ error: "User not found", code: "NOT_FOUND" });
         return;
       }
+
+      await this.prisma.autopayOrder.create({
+        data: { id: orderId, userId },
+      });
 
       const paymentUrl = this.autopayService.createPaymentLink({
         orderId,
